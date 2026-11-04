@@ -1,0 +1,44 @@
+JIRA REPORT - HƯỚNG DẪN CÀI ĐẶT (Windows 10/11)
+=================================================
+
+CHUẨN BỊ (1 lần)
+  - Biết địa chỉ Jira của công ty (ví dụ https://jira.congty.com). Địa chỉ này
+    bạn sẽ nhập khi cài đặt, nó không có sẵn trong source.
+  - Tạo "Personal Access Token" (PAT) trên Jira:
+    Jira -> bấm avatar -> Profile -> Personal Access Tokens -> Create token.
+    Copy token lại (chỉ hiện 1 lần).
+  - Nếu Jira của công ty cần VPN thì bật VPN trước.
+
+CÀI ĐẶT (1 lần)
+  1. Giải nén thư mục này ra chỗ cố định (ví dụ D:\JiraReport).
+     Đừng chạy trực tiếp trong file ZIP, và đừng di chuyển thư mục sau khi cài.
+  2. Bấm đúp  CAI-DAT.bat
+  3. Khi được hỏi, nhập địa chỉ Jira rồi dán PAT vào, nhấn Enter.
+     (Dán xong sẽ không thấy ký tự nào hiện ra, đó là bình thường.)
+  4. Đợi vài phút. Xong sẽ tự mở trình duyệt.
+
+SỬ DỤNG HÀNG NGÀY
+  - Bấm shortcut "Jira Report" ngoài Desktop.
+  - Ứng dụng cũng tự chạy ngầm mỗi khi bạn đăng nhập Windows.
+
+CẬP NHẬT BẢN MỚI
+  - Giải nén bản mới đè lên thư mục cũ (file cấu hình của bạn được giữ nguyên),
+    rồi bấm đúp  CAP-NHAT.bat
+
+ĐỔI PAT (khi hết hạn / bị từ chối)
+  - Bấm đúp  CAI-DAT.bat  và chọn nhập lại (gõ N).
+
+GỠ CÀI ĐẶT
+  - Bấm đúp  GO-CAI-DAT.bat  rồi xoá thư mục.
+
+GẶP LỖI?
+  - Mở file  logs\app.log  để xem lỗi.
+  - Máy chưa có Python: CAI-DAT.bat sẽ hỏi "Cài Python giúp bạn?" - nhấn Enter để đồng ý.
+    Nếu tự cài thì tải từ https://www.python.org/downloads/ (nhớ tick "Add python.exe to PATH")
+    rồi bấm CAI-DAT.bat lại.
+  - Trang không mở được: chạy lại CAI-DAT.bat hoặc CAP-NHAT.bat.
+
+LƯU Ý BẢO MẬT
+  - PAT là của riêng bạn, không chia sẻ cho người khác.
+  - Khi gửi thư mục này cho người khác, KHÔNG gửi kèm file ".env" và thư mục ".venv".
+  - Ứng dụng chỉ mở ở địa chỉ nội bộ 127.0.0.1, người khác trong mạng không truy cập được.

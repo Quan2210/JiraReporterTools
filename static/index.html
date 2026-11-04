@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jira Report</title>
+  <script>
+    /* apply the saved theme before first paint to avoid a light flash */
+    try { var t = localStorage.getItem("jira-report-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap">
+  <link rel="icon" id="favicon" type="image/png" href="img/favicon.png">
+  <link rel="icon" type="image/x-icon" href="img/favicon.ico" sizes="any">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-view="table">
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="3" y="4" width="18" height="4" rx="1" fill="currentColor"/><rect x="3" y="10" width="12" height="4" rx="1" fill="currentColor" opacity=".65"/><rect x="3" y="16" width="15" height="4" rx="1" fill="currentColor" opacity=".35"/></svg>
+      <span>Jira Report</span>
+    </div>
+    <nav class="views" role="tablist" aria-label="Chế độ xem">
+      <button class="view-tab" role="tab" data-tab="table" aria-selected="true">Bảng</button>
+      <button class="view-tab" role="tab" data-tab="dash" aria-selected="false">Dashboard</button>
+    </nav>
+    <span class="spacer"></span>
+    <span id="persist-warn" class="note-warn" hidden>Không lưu được tự động — hãy dùng "Xuất hồ sơ"</span>
+    <span id="status" class="pill pill-wait">Đang kết nối…</span>
+    <button id="btn-focus" class="btn" aria-pressed="false" title="Ẩn bộ lọc để xem rộng hơn (Esc để thu nhỏ)"><span class="ico" data-icon="expand"></span><span class="lbl">Mở rộng</span></button>
+    <button id="btn-fullscreen" class="btn btn-icon" title="Toàn màn hình" aria-label="Toàn màn hình"><span class="ico" data-icon="fullscreen"></span></button>
+    <button id="btn-theme" class="btn btn-icon" aria-label="Đổi giao diện"><span class="ico" data-icon="auto"></span></button>
+    <div class="menu-wrap">
+      <button id="btn-profile-menu" class="btn" aria-haspopup="true" aria-expanded="false">Hồ sơ <span class="ico" data-icon="chevron"></span></button>
+      <div id="profile-menu" class="menu" hidden>
+        <button id="btn-colors" class="menu-item">Màu theo status…</button>
+        <button id="btn-profile-import" class="menu-item">Nhập hồ sơ…</button>
+        <button id="btn-profile-export" class="menu-item">Xuất hồ sơ</button>
+      </div>
+    </div>
+    <input type="file" id="profile-file" accept="application/json,.json" hidden>
+  </header>
+
+  <div class="shell">
+    <aside class="sidebar" id="sidebar" aria-label="Bộ lọc">
+      <div class="side-head">
+        <h2>Bộ lọc</h2>
+        <span id="filter-count" class="badge" hidden></span>
+        <span class="spacer"></span>
+        <label class="switch" title="Viết JQL trực tiếp"><input type="checkbox" id="jql-toggle"><span>JQL</span></label>
+        <div class="menu-wrap">
+          <button id="btn-visibility" class="btn btn-icon" title="Chọn bộ lọc muốn hiển thị" aria-label="Chọn bộ lọc muốn hiển thị"><span class="ico" data-icon="sliders"></span></button>
+          <div id="visibility-menu" class="menu menu-left" hidden></div>
+        </div>
+      </div>
+      <div class="side-body">
+        <div id="filter-grid" class="filter-list"></div>
+        <div id="custom-filters-wrap" class="custom-wrap">
+          <div id="custom-filters"></div>
+          <button id="btn-add-custom" class="btn btn-ghost"><span class="ico" data-icon="plus"></span>Thêm bộ lọc theo field Jira</button>
+        </div>
+        <div id="jql-panel" class="jql-panel" hidden>
+          <textarea id="jql-text" rows="7" spellcheck="false" placeholder='project = ABC AND assignee in membersOf("backend") ORDER BY created DESC' aria-label="JQL"></textarea>
+          <p class="hint">JQL này được dùng nguyên văn, các bộ lọc khác bị bỏ qua. Tắt công tắc JQL để chuyển ngược về bộ lọc; phần không chuyển được sẽ được liệt kê.</p>
+        </div>
+      </div>
+      <div class="side-foot">
+        <button id="btn-run" class="btn btn-primary">Chạy báo cáo</button>
+        <button id="btn-clear-filters" class="btn">Xóa bộ lọc</button>
+      </div>
+    </aside>
+
+    <main class="main" id="main">
+      <div class="toolbar">
+        <div class="menu-wrap">
+          <button id="btn-columns" class="btn" aria-haspopup="true" aria-expanded="false"><span class="ico" data-icon="columns"></span>Cột <span id="col-count" class="badge badge-quiet"></span></button>
+          <div id="columns-pop" class="popover" hidden>
+            <p class="pop-title">Cột hiển thị <small>Thứ tự chọn là thứ tự cột. Dùng ◀ ▶ để đổi.</small></p>
+            <div id="f-columns"></div>
+            <label class="check"><input type="checkbox" id="show-note" checked> Hiện cột Ghi chú</label>
+          </div>
+        </div>
+        <div class="group-ctl table-only">
+          <span class="muted">Nhóm theo</span>
+          <div id="group-levels"></div>
+          <button id="btn-add-group" class="btn btn-ghost" disabled>+ Thêm cấp</button>
+          <button id="btn-collapse-groups" class="btn btn-ghost" disabled title="Thu gọn / mở rộng tất cả nhóm">Thu gọn nhóm</button>
+        </div>
+        <span id="sort-info" class="sort-chip table-only" hidden></span>
+        <button id="btn-clear-sort" class="btn btn-ghost table-only" hidden>Bỏ sắp xếp</button>
+        <span class="spacer"></span>
+        <button id="btn-select-all" class="btn btn-ghost table-only" disabled>Chọn tất cả</button>
+        <button id="btn-refresh" class="btn" title="Chạy lại báo cáo với bộ lọc hiện tại"><span class="ico" data-icon="refresh"></span>Chạy lại</button>
+      </div>
+
+      <div class="results">
+        <section id="view-table" class="view">
+          <div id="empty" class="empty">
+            <h2>Chưa có dữ liệu</h2>
+            <p id="empty-text">Chọn bộ lọc ở bên trái rồi bấm <strong>Chạy báo cáo</strong>. Tích chọn dòng trong bảng để xuất Excel, CSV, copy hoặc tạo tin nhắn.</p>
+          </div>
+          <div id="result-wrap" class="result-wrap" hidden>
+            <div class="meta">
+              <span id="count"></span>
+              <span id="truncated" class="warn" hidden>Kết quả bị cắt bớt do vượt giới hạn số dòng.</span>
+              <span id="drill-chip" class="chip" hidden></span>
+              <details class="jql"><summary>JQL đã dùng</summary><code id="jql"></code></details>
+            </div>
+            <div class="table-wrap" id="table-wrap"><table id="table"></table></div>
+            <div class="pager" id="pager">
+              <span id="range-info" class="muted"></span>
+              <div class="pager-nav">
+                <button id="pg-first" class="btn btn-icon" aria-label="Trang đầu" title="Trang đầu"><span class="ico" data-icon="first"></span></button>
+                <button id="prev" class="btn btn-icon" aria-label="Trang trước" title="Trang trước"><span class="ico" data-icon="prev"></span></button>
+                <label class="goto">Trang <input id="page-input" type="number" min="1" inputmode="numeric" aria-label="Đi tới trang"> / <span id="page-total"></span></label>
+                <button id="next" class="btn btn-icon" aria-label="Trang sau" title="Trang sau"><span class="ico" data-icon="next"></span></button>
+                <button id="pg-last" class="btn btn-icon" aria-label="Trang cuối" title="Trang cuối"><span class="ico" data-icon="last"></span></button>
+              </div>
+              <label class="size">Dòng mỗi trang
+                <select id="page-size"><option>20</option><option>50</option><option>100</option><option>200</option><option>500</option></select>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <section id="view-dash" class="view" hidden>
+          <div class="dash-controls">
+            <label class="field"><span>Trục X</span><select id="dash-x"></select></label>
+            <label class="field" id="dash-x-bucket-wrap" hidden><span>X theo</span><select id="dash-x-bucket"></select></label>
+            <label class="field"><span>Trục Y</span><select id="dash-y"></select></label>
+            <label class="field" id="dash-y-bucket-wrap" hidden><span>Y theo</span><select id="dash-y-bucket"></select></label>
+            <label class="field"><span>Giá trị</span><select id="dash-measure"></select></label>
+            <label class="field"><span>Sắp xếp trục</span>
+              <select id="dash-order"><option value="key">Theo tên</option><option value="total">Theo tổng giảm dần</option></select></label>
+            <label class="field"><span>Kiểu</span>
+              <select id="dash-kind"><option value="matrix">Ma trận</option><option value="bars">Biểu đồ cột chồng</option></select></label>
+          </div>
+          <div id="dash-note" class="muted"></div>
+          <div id="dash-out" class="dash-out"></div>
+        </section>
+      </div>
+
+      <div id="tray" class="tray" role="region" aria-label="Xuất và copy các dòng đã chọn" hidden>
+        <div class="tray-count"><strong id="tray-count"></strong><span id="tray-pages" class="muted"></span></div>
+        <div class="tray-actions">
+          <button id="btn-xlsx" class="btn btn-primary">Xuất Excel</button>
+          <button id="btn-csv" class="btn">Xuất CSV</button>
+          <button id="btn-copy" class="btn">Copy bảng</button>
+          <button id="btn-message" class="btn">Xuất tin nhắn</button>
+          <button id="btn-clear-selection" class="btn btn-ghost">Bỏ chọn</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <dialog id="dlg-colors">
+    <form method="dialog">
+      <h3>Màu theo status</h3>
+      <p class="hint">Mặc định lấy theo nhóm trạng thái của Jira. Màu được dùng trong bảng, file Excel và khi copy.</p>
+      <fieldset class="radios">
+        <label><input type="radio" name="color-scope" value="row"> Tô cả dòng</label>
+        <label><input type="radio" name="color-scope" value="cell"> Chỉ tô ô Status</label>
+      </fieldset>
+      <div id="color-list" class="color-list"></div>
+      <div class="dlg-actions">
+        <button type="button" id="colors-reset" class="btn">Về mặc định</button>
+        <span class="spacer"></span>
+        <button class="btn btn-primary" value="close">Xong</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-message">
+    <form method="dialog">
+      <h3>Xuất tin nhắn</h3>
+      <label class="field"><span>Mẫu <small>{key} {summary} {note} {status} {url}</small></span>
+        <input type="text" id="msg-template" spellcheck="false"></label>
+      <textarea id="msg-text" rows="14" readonly aria-label="Nội dung tin nhắn"></textarea>
+      <div class="dlg-actions">
+        <span id="msg-count" class="muted"></span>
+        <span class="spacer"></span>
+        <button type="button" id="msg-copy" class="btn btn-primary">Copy</button>
+        <button class="btn" value="close">Đóng</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-confirm">
+    <form method="dialog">
+      <h3 id="confirm-title"></h3>
+      <div id="confirm-body"></div>
+      <div class="dlg-actions" id="confirm-actions"></div>
+    </form>
+  </dialog>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
