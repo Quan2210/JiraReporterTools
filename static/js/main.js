@@ -9,6 +9,7 @@ import { initAnimatedFavicon } from "./favicon.js";
 import { loadHealth, loadMeta, meta } from "./meta.js";
 import { initProfileUi } from "./profile-ui.js";
 import { loadProfile, onPersist, saveProfile, store } from "./store.js";
+import { createReminders } from "./reminders.js";
 import { createTable } from "./table.js";
 import { initFocusMode, initFullscreen, initTheme } from "./ui.js";
 
@@ -36,6 +37,7 @@ const dashboard = createDashboard({
 });
 createActions({ table });
 const filters = createFilters({});
+const reminders = createReminders({ getQuery: () => filters.getQuery(), activeCount: () => filters.activeCount() });
 
 const columnPicker = new MultiSelect($("f-columns"), {
   placeholder: "Thêm cột…", reorder: true,
@@ -140,7 +142,9 @@ function selectTab(name) {
   document.body.dataset.view = name;
   $("view-table").hidden = name !== "table";
   $("view-dash").hidden = name !== "dash";
+  $("view-reminders").hidden = name !== "reminders";
   if (name === "dash") dashboard.refresh();
+  if (name === "reminders") reminders.refresh();
 }
 for (const tab of document.querySelectorAll(".view-tab")) tab.addEventListener("click", () => selectTab(tab.dataset.tab));
 

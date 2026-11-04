@@ -1,6 +1,7 @@
 import { DEFAULT_TEMPLATE } from "./message.js";
 import { isHexColor } from "./color.js";
 import { DEFAULT_PAGE_SIZE, PAGE_SIZES } from "./paging.js";
+import { isDateToken } from "./dates.js";
 
 export const PROFILE_VERSION = 1;
 export const MAX_PROFILE_BYTES = 5 * 1024 * 1024;
@@ -34,7 +35,7 @@ function sanitizeFilters(input) {
       .map((o) => ({ value: o.value.slice(0, 255), label: str(o.label, 300) || o.value.slice(0, 255) }));
   }
   for (const name of ["created_from", "created_to", "updated_from", "updated_to"]) {
-    out[name] = typeof input[name] === "string" && DATE_RE.test(input[name]) ? input[name] : "";
+    out[name] = typeof input[name] === "string" && (DATE_RE.test(input[name]) || isDateToken(input[name])) ? input[name].trim() : "";
   }
   out.jqlMode = input.jqlMode === true;
   out.jqlText = str(input.jqlText, 5000);

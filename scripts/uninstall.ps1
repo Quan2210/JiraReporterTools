@@ -17,4 +17,12 @@ if (Test-Path $EnvFile) {
         Write-Ok "Đã xoá .env."
     }
 }
+$DataDir = Join-Path $Root 'data'
+if (Test-Path $DataDir) {
+    $answer = Read-Host "Xoá luôn thư mục data (lịch nhắc nhở và lịch sử gửi)? Gõ Y để xoá, Enter để giữ"
+    if ($answer.Trim().ToUpper() -eq 'Y') {
+        Remove-Item -LiteralPath $DataDir -Recurse -Force
+        Write-Ok "Đã xoá data."
+    }
+}
 Write-Host "`nXong. Muốn dọn sạch hoàn toàn thì xoá thư mục này." -ForegroundColor Green

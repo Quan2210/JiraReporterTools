@@ -21,6 +21,12 @@ SỬ DỤNG HÀNG NGÀY
   - Bấm shortcut "Jira Report" ngoài Desktop.
   - Ứng dụng cũng tự chạy ngầm mỗi khi bạn đăng nhập Windows.
 
+NHẮC NHỞ THEO LỊCH (tuỳ chọn)
+  - Tab "Nhắc nhở" (cạnh Dashboard): chọn bộ lọc, đặt ngày + giờ (lặp theo tuần hoặc
+    chỉ một lần), app tự gửi danh sách issue vào Slack hoặc Telegram. Có nút gửi thử. Chỉ chạy khi ứng dụng đang chạy trên máy này.
+  - Cần điền vào file ".env": SLACK_WEBHOOK_URL (Slack) và/hoặc TELEGRAM_BOT_TOKEN
+    (Telegram, tạo bot qua @BotFather). Sửa xong khởi động lại app. Xem README.md.
+
 CẬP NHẬT BẢN MỚI
   - Giải nén bản mới đè lên thư mục cũ (file cấu hình của bạn được giữ nguyên),
     rồi bấm đúp  CAP-NHAT.bat

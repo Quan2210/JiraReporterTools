@@ -35,6 +35,9 @@ let toastTimer = null;
 /** kind: "" (stays until replaced) | "ok" (4 s) | "err" (10 s). setMsg("") hides it. */
 export function setMsg(text, kind = "") {
   const toast = $("toast");
+  // A modal <dialog> sits in the top layer above everything: the toast must live inside it to be seen.
+  const host = [...document.querySelectorAll("dialog[open]")].pop() ?? document.body;
+  if (toast.parentElement !== host) host.append(toast);
   clearTimeout(toastTimer);
   if (!text) { toast.hidden = true; return; }
   toast.textContent = text;

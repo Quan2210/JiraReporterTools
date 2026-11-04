@@ -24,6 +24,7 @@
     <nav class="views" role="tablist" aria-label="Chế độ xem">
       <button class="view-tab" role="tab" data-tab="table" aria-selected="true">Bảng</button>
       <button class="view-tab" role="tab" data-tab="dash" aria-selected="false">Dashboard</button>
+      <button class="view-tab" role="tab" data-tab="reminders" aria-selected="false">Nhắc nhở</button>
     </nav>
     <span class="spacer"></span>
     <span id="persist-warn" class="note-warn" hidden>Không lưu được tự động — hãy dùng "Xuất hồ sơ"</span>
@@ -124,6 +125,22 @@
           </div>
         </section>
 
+        <section id="view-reminders" class="view" hidden>
+          <div class="rem-toolbar" role="toolbar" aria-label="Tác vụ nhắc nhở">
+            <button id="rem-add" class="btn btn-primary" title="Thêm nhắc nhở từ bộ lọc hiện tại" aria-label="Thêm nhắc nhở"><span class="ico" data-icon="plus"></span>Thêm</button>
+            <span id="rem-actions" class="rem-actions"></span>
+            <span class="spacer"></span>
+            <span id="rem-bulk" class="rem-bulk" hidden></span>
+            <span id="rem-channels" class="rem-channels"></span>
+            <button id="rem-refresh" class="btn btn-icon" title="Làm mới" aria-label="Làm mới"><span class="ico" data-icon="refresh"></span></button>
+          </div>
+          <div id="rem-empty" class="empty" hidden>
+            <h2>Chưa có nhắc nhở nào</h2>
+            <p>Chọn bộ lọc ở bên trái rồi bấm <strong>Thêm</strong>. Nhắc nhở chỉ chạy khi ứng dụng đang mở trên máy này.</p>
+          </div>
+          <div class="table-wrap" id="rem-table-wrap"><table id="rem-table" class="rem-table" tabindex="0" aria-label="Danh sách nhắc nhở. Enter: chi tiết. Phím Menu hoặc Shift+F10: tác vụ. Space: chọn dòng."></table></div>
+        </section>
+
         <section id="view-dash" class="view" hidden>
           <div class="dash-controls">
             <label class="field"><span>Trục X</span><select id="dash-x"></select></label>
@@ -153,6 +170,8 @@
       </div>
     </main>
   </div>
+
+  <div id="rem-menu" class="menu ctx-menu" role="menu" hidden></div>
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
@@ -186,6 +205,95 @@
         <button class="btn" value="close">Đóng</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="dlg-reminder-detail" class="dlg-wide dlg-detail">
+    <button type="button" class="dlg-x" title="Đóng" aria-label="Đóng"><span class="ico" data-icon="close"></span></button>
+    <header class="rd-head"><h3 id="rd-title"></h3><span id="rd-state" class="rem-state"></span></header>
+    <div class="rd-grid">
+      <section class="rd-card"><h4><span class="ico" data-icon="clock"></span>Lịch</h4><div id="rd-schedule" class="rd-big"></div><div id="rd-next" class="muted"></div></section>
+      <section class="rd-card"><h4><span class="ico" data-icon="send"></span>Gửi tới</h4><div id="rd-channel" class="rd-big"></div><div id="rd-cond" class="muted"></div></section>
+      <section class="rd-card rd-wide"><h4><span class="ico" data-icon="filter"></span>Bộ lọc</h4><div id="rd-filter" class="chips"></div></section>
+      <section class="rd-card rd-wide"><h4><span class="ico" data-icon="code"></span>Mẫu mỗi dòng</h4><code id="rd-template" class="rd-code"></code></section>
+      <section class="rd-card rd-wide"><h4><span class="ico" data-icon="clock"></span>Gần đây</h4><ul id="rd-runs" class="rd-runs"></ul></section>
+    </div>
+    <div class="dlg-actions">
+      <button type="button" id="rd-edit" class="btn btn-primary" title="Sửa" aria-label="Sửa"><span class="ico" data-icon="edit"></span>Sửa</button>
+      <button type="button" id="rd-test" class="btn btn-icon" title="Gửi thử" aria-label="Gửi thử"><span class="ico" data-icon="send"></span></button>
+      <button type="button" id="rd-dup" class="btn btn-icon" title="Nhân bản" aria-label="Nhân bản"><span class="ico" data-icon="copy"></span></button>
+      <span class="spacer"></span>
+      <button type="button" id="rd-delete" class="btn btn-icon btn-danger" title="Xóa" aria-label="Xóa"><span class="ico" data-icon="trash"></span></button>
+    </div>
+  </dialog>
+
+  <dialog id="dlg-reminder-form" class="dlg-wide dlg-form">
+    <header class="dlg-head"><h3 id="rem-form-title"></h3>
+      <button type="button" class="dlg-x" title="Đóng" aria-label="Đóng"><span class="ico" data-icon="close"></span></button></header>
+    <div id="rem-form" class="dlg-body">
+      <div class="rem-grid">
+        <div class="rem-col rem-settings">
+          <label class="field"><span>Tên</span><input type="text" id="rem-name" maxlength="100" autocomplete="off"></label>
+          <div class="field"><span>Bộ lọc</span>
+            <div class="rem-filter">
+              <div id="rem-query" class="chips"></div>
+              <span class="rem-filter-actions">
+                <button type="button" id="rem-use-filter" class="btn btn-icon" title="Lấy lại từ bộ lọc hiện tại ở thanh bên" aria-label="Lấy bộ lọc hiện tại"><span class="ico" data-icon="filter"></span></button>
+                <button type="button" id="rem-edit-jql" class="btn btn-icon" title="Sửa bằng JQL" aria-label="Sửa bằng JQL" aria-pressed="false"><span class="ico" data-icon="code"></span></button>
+              </span>
+            </div>
+            <div id="rem-jql-box" hidden>
+              <textarea id="rem-jql" rows="4" spellcheck="false" aria-label="JQL" placeholder='project = ABC AND created >= -7d'></textarea>
+              <div class="rem-jql-actions"><span class="hint">Ngày động chuyển thành ngày cố định; dùng JQL tương đối như -7d nếu cần.</span><span class="spacer"></span>
+                <button type="button" id="rem-jql-apply" class="btn btn-icon" title="Áp dụng JQL" aria-label="Áp dụng JQL"><span class="ico" data-icon="check"></span></button></div>
+            </div>
+            <div id="rem-query-warn"></div>
+          </div>
+          <fieldset class="radios rem-kind">
+            <label><input type="radio" name="rem-kind" value="weekly"> Lặp theo tuần</label>
+            <label><input type="radio" name="rem-kind" value="once"> Một lần</label>
+          </fieldset>
+          <div id="rem-weekly" class="rem-days-row"><div id="rem-days" class="rem-days"></div></div>
+          <div class="rem-when">
+            <div id="rem-once" class="field" hidden><span>Ngày</span><div id="rem-once-date" class="rem-once-date"></div></div>
+            <label class="field"><span>Giờ</span><input type="time" id="rem-time" title="Giờ của máy này"></label>
+          </div>
+          <div class="rem-row">
+            <label class="field"><span>Kênh</span>
+              <select id="rem-channel"><option value="slack">Slack</option><option value="telegram">Telegram</option></select></label>
+            <label class="field"><span>Gửi khi</span>
+              <select id="rem-condition"><option value="always">Luôn gửi</option><option value="only_if_results">Có issue</option></select></label>
+            <label class="field"><span>Số dòng</span><input type="number" id="rem-maxlines" min="1" max="100" title="Số dòng tối đa mỗi tin"></label>
+          </div>
+          <p id="rem-channel-warn" class="hint warn"></p>
+          <div id="rem-chat-row" class="field" hidden><span>Telegram chat_id <button type="button" class="info-tip" tabindex="-1" title="Người nhận nhắn bot một tin (hoặc thêm bot vào nhóm rồi nhắn 1 tin), sau đó bấm nút lấy chat_id." aria-label="Hướng dẫn"><span class="ico" data-icon="info"></span></button></span>
+            <div class="rem-inline"><input type="text" id="rem-chat" inputmode="numeric" placeholder="123456789 hoặc -100123456789" autocomplete="off">
+              <button type="button" id="rem-find-chat" class="btn btn-icon" title="Lấy chat_id từ những người đã nhắn bot" aria-label="Lấy chat_id"><span class="ico" data-icon="chat"></span></button></div>
+            <select id="rem-chat-pick" hidden aria-label="Chọn chat"></select>
+          </div>
+          <div class="field"><label for="rem-title">Tiêu đề tin <button type="button" class="info-tip" tabindex="-1" title="Dòng đầu của tin nhắn. Biến: &#123;name&#125; tên nhắc nhở, &#123;count&#125; số issue, &#123;date&#125; ngày hôm nay. Để trống = &quot;&#123;name&#125; (&#123;count&#125; issue)&quot;." aria-label="Hướng dẫn"><span class="ico" data-icon="info"></span></button></label>
+            <div class="rem-inline"><input type="text" id="rem-title" spellcheck="false" maxlength="200" autocomplete="off" placeholder="&#123;name&#125; (&#123;count&#125; issue)">
+              <span id="rem-title-add-slot"></span></div></div>
+          <div class="field"><label for="rem-template">Mẫu mỗi dòng <button type="button" class="info-tip" tabindex="-1" title="Mỗi issue một dòng. Gõ &#123; để gợi ý các cột Jira (key, summary, status, url, assignee, created, ...), hoặc bấm nút + để chọn." aria-label="Hướng dẫn"><span class="ico" data-icon="info"></span></button></label>
+            <div class="rem-inline"><input type="text" id="rem-template" spellcheck="false" maxlength="1000" autocomplete="off" placeholder="Gõ &#123; để chọn cột Jira">
+              <span id="rem-template-add-slot"></span></div></div>
+        </div>
+        <section class="rem-preview" id="rem-preview-box" aria-label="Xem trước">
+          <header class="rem-preview-head">
+            <h4><span class="ico" data-icon="eye"></span>Xem trước</h4>
+            <span class="spacer"></span>
+            <button type="button" id="rem-preview-btn" class="btn btn-icon" title="Chạy bộ lọc và xem tin sẽ gửi (không gửi thật)" aria-label="Chạy xem trước"><span class="ico" data-icon="refresh"></span></button>
+            <button type="button" id="rem-preview-full" class="btn btn-icon" title="Phóng to xem trước (Esc để thu nhỏ)" aria-label="Phóng to xem trước" aria-pressed="false"><span class="ico" data-icon="expand"></span></button>
+          </header>
+          <textarea id="rem-preview" readonly aria-label="Nội dung xem trước" placeholder="Bấm nút làm mới ở trên để xem tin nhắn sẽ gửi"></textarea>
+        </section>
+      </div>
+    </div>
+    <div class="dlg-actions dlg-foot">
+      <label class="switch" title="Bật / tắt nhắc nhở"><input type="checkbox" id="rem-enabled"><span>Bật</span></label>
+      <span class="spacer"></span>
+      <button type="button" id="rem-send-test" class="btn btn-icon" title="Gửi thử ngay bằng cấu hình đang nhập (không cần lưu)" aria-label="Gửi thử ngay"><span class="ico" data-icon="send"></span></button>
+      <button type="button" id="rem-save" class="btn btn-primary" title="Lưu" aria-label="Lưu"><span class="ico" data-icon="check"></span>Lưu</button>
+    </div>
   </dialog>
 
   <dialog id="dlg-confirm">

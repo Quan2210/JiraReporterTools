@@ -18,6 +18,19 @@ export const ICONS = {
   prev: svg('<path d="M15 6l-6 6 6 6"/>'),
   next: svg('<path d="M9 6l6 6-6 6"/>'),
   last: svg('<path d="M7 18l6-6-6-6M17 6v12"/>'),
+  eye: svg('<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
+  edit: svg('<path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/>'),
+  send: svg('<path d="M21 3L10 14M21 3l-7 18-4-7-7-4 18-7z"/>'),
+  power: svg('<path d="M12 3v9M6.3 6.3a8 8 0 1011.4 0"/>'),
+  copy: svg('<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 01-1-1V4a1 1 0 011-1h10a1 1 0 011 1v1"/>'),
+  clock: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+  trash: svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'),
+  close: svg('<path d="M6 6l12 12M18 6L6 18"/>'),
+  check: svg('<path d="M5 12l5 5L20 7"/>'),
+  code: svg('<path d="M8 8l-5 4 5 4M16 8l5 4-5 4M14 5l-4 14"/>'),
+  filter: svg('<path d="M3 5h18l-7 8v6l-4-2v-4L3 5z"/>'),
+  info: svg('<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>'),
+  chat: svg('<path d="M4 5h16v11H10l-5 4v-4H4V5z"/>'),
 };
 
 export function hydrateIcons(root = document) {

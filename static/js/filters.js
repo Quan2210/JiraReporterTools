@@ -42,8 +42,8 @@ export function createFilters({ onChange }) {
     return wrap;
   }
   const dateRange = (id, label) => {
-    const from = createDateField({ label: `${label} từ ngày`, onChange: changed });
-    const to = createDateField({ label: `${label} đến ngày`, onChange: changed });
+    const from = createDateField({ label: `${label} từ ngày`, placeholder: "Từ ngày (dd/MM/yyyy)", onChange: changed });
+    const to = createDateField({ label: `${label} đến ngày`, placeholder: "Đến ngày (dd/MM/yyyy)", onChange: changed });
     dates[id] = { from, to };
     return el("div", { class: "range" }, from.el, to.el);
   };

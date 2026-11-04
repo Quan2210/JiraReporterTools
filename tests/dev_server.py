@@ -4,6 +4,7 @@ For manual / browser verification only; it is not part of the product.
 """
 import os
 import random
+import tempfile
 
 import uvicorn
 
@@ -66,4 +67,5 @@ class DevClient(FakeClient):
 
 if __name__ == "__main__":
     settings = Settings(jira_base_url="https://jira.example.test", jira_pat="dev-only", max_rows=5000, page_size=100)
-    uvicorn.run(create_app(settings=settings, client=DevClient(total=123)), host="127.0.0.1", port=int(os.getenv("DEV_PORT", "8766")))
+    db = os.path.join(tempfile.mkdtemp(prefix="jira-report-dev-"), "reminders.db")
+    uvicorn.run(create_app(settings=settings, client=DevClient(total=123), reminder_db_path=db, scheduler=True), host="127.0.0.1", port=int(os.getenv("DEV_PORT", "8766")))
