@@ -214,6 +214,8 @@
       <section class="rd-card"><h4><span class="ico" data-icon="clock"></span>Lịch</h4><div id="rd-schedule" class="rd-big"></div><div id="rd-next" class="muted"></div></section>
       <section class="rd-card"><h4><span class="ico" data-icon="send"></span>Gửi tới</h4><div id="rd-channel" class="rd-big"></div><div id="rd-cond" class="muted"></div></section>
       <section class="rd-card rd-wide"><h4><span class="ico" data-icon="filter"></span>Bộ lọc</h4><div id="rd-filter" class="chips"></div></section>
+      <section class="rd-card rd-wide" id="rd-rules-card" hidden><h4><span class="ico" data-icon="filter"></span>Quy tắc và nhóm</h4><ul id="rd-rules" class="rd-runs"></ul></section>
+      <section class="rd-card rd-wide" id="rd-custom-card" hidden><h4><span class="ico" data-icon="edit"></span>Tin viết tay (gửi nguyên văn)</h4><code id="rd-custom" class="rd-code"></code></section>
       <section class="rd-card rd-wide"><h4><span class="ico" data-icon="code"></span>Mẫu mỗi dòng</h4><code id="rd-template" class="rd-code"></code></section>
       <section class="rd-card rd-wide"><h4><span class="ico" data-icon="clock"></span>Gần đây</h4><ul id="rd-runs" class="rd-runs"></ul></section>
     </div>
@@ -261,7 +263,8 @@
             <label class="field"><span>Kênh</span>
               <select id="rem-channel"><option value="slack">Slack</option><option value="telegram">Telegram</option></select></label>
             <label class="field"><span>Gửi khi</span>
-              <select id="rem-condition"><option value="always">Luôn gửi</option><option value="only_if_results">Có issue</option></select></label>
+              <span class="rem-inline"><select id="rem-condition"></select>
+                <input type="number" id="rem-min-count" min="1" max="1000" value="1" title="Số issue tối thiểu" aria-label="Số issue tối thiểu" hidden></span></label>
             <label class="field"><span>Số dòng</span><input type="number" id="rem-maxlines" min="1" max="100" title="Số dòng tối đa mỗi tin"></label>
           </div>
           <p id="rem-channel-warn" class="hint warn"></p>
@@ -276,14 +279,38 @@
           <div class="field"><label for="rem-template">Mẫu mỗi dòng <button type="button" class="info-tip" tabindex="-1" title="Mỗi issue một dòng. Gõ &#123; để gợi ý các cột Jira (key, summary, status, url, assignee, created, ...), hoặc bấm nút + để chọn." aria-label="Hướng dẫn"><span class="ico" data-icon="info"></span></button></label>
             <div class="rem-inline"><input type="text" id="rem-template" spellcheck="false" maxlength="1000" autocomplete="off" placeholder="Gõ &#123; để chọn cột Jira">
               <span id="rem-template-add-slot"></span></div></div>
+          <details class="rem-section" id="rem-rules-box">
+            <summary><span class="ico" data-icon="filter"></span>Quy tắc ghi chú <span id="rem-rules-count" class="badge badge-quiet"></span>
+              <button type="button" class="info-tip" tabindex="-1" title="Mỗi issue được so với các quy tắc từ trên xuống, quy tắc đầu tiên khớp được dùng. Ghi chú điền vào biến &#123;note&#125; (nhớ đặt &#123;note&#125; trong mẫu mỗi dòng). &quot;Ẩn dòng&quot; bỏ issue đó khỏi tin và khỏi số đếm." aria-label="Hướng dẫn"><span class="ico" data-icon="info"></span></button></summary>
+            <div class="rem-section-body">
+              <p id="rem-rules-empty" class="hint">Chưa có quy tắc. Ví dụ: khi Status là Done thì ghi chú "Done pilot".</p>
+              <div id="rem-rules" class="rem-rules"></div>
+              <div class="rem-rules-foot">
+                <button type="button" id="rem-rule-add" class="btn btn-icon" title="Thêm quy tắc" aria-label="Thêm quy tắc"><span class="ico" data-icon="plus"></span></button>
+                <label class="rem-default-note"><span>Còn lại</span><input type="text" id="rem-default-note" maxlength="200" autocomplete="off" placeholder="Ghi chú mặc định (để trống = không ghi chú)"></label>
+              </div>
+            </div>
+          </details>
+          <details class="rem-section" id="rem-group-box">
+            <summary><span class="ico" data-icon="columns"></span>Nhóm và sắp xếp <span id="rem-group-count" class="badge badge-quiet"></span></summary>
+            <div class="rem-section-body rem-group-grid">
+              <label class="field"><span>Nhóm theo</span><select id="rem-group-by"></select></label>
+              <label class="field"><span>Thứ tự nhóm</span><select id="rem-group-order"><option value="name">Theo tên</option><option value="count">Nhiều issue trước</option></select></label>
+              <label class="field"><span>Sắp xếp theo</span><select id="rem-sort-by"></select></label>
+              <label class="field"><span>Chiều</span><select id="rem-sort-dir"><option value="asc">Tăng dần</option><option value="desc">Giảm dần</option></select></label>
+            </div>
+          </details>
         </div>
         <section class="rem-preview" id="rem-preview-box" aria-label="Xem trước">
           <header class="rem-preview-head">
             <h4><span class="ico" data-icon="eye"></span>Xem trước</h4>
+            <span id="rem-preview-tag" class="rem-tag" hidden>Sửa tay</span>
             <span class="spacer"></span>
+            <button type="button" id="rem-preview-edit" class="btn btn-icon" title="Sửa tay nội dung tin (chỉ nhắc nhở một lần): tin được gửi đúng như bạn viết" aria-label="Sửa tay tin nhắn" aria-pressed="false" hidden><span class="ico" data-icon="edit"></span></button>
             <button type="button" id="rem-preview-btn" class="btn btn-icon" title="Chạy bộ lọc và xem tin sẽ gửi (không gửi thật)" aria-label="Chạy xem trước"><span class="ico" data-icon="refresh"></span></button>
             <button type="button" id="rem-preview-full" class="btn btn-icon" title="Phóng to xem trước (Esc để thu nhỏ)" aria-label="Phóng to xem trước" aria-pressed="false"><span class="ico" data-icon="expand"></span></button>
           </header>
+          <p id="rem-decision" class="rem-decision" hidden></p>
           <textarea id="rem-preview" readonly aria-label="Nội dung xem trước" placeholder="Bấm nút làm mới ở trên để xem tin nhắn sẽ gửi"></textarea>
         </section>
       </div>

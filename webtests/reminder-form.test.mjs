@@ -112,7 +112,7 @@ test("duplicate is a new, disabled copy; a one-time copy gets a fresh time", () 
 test("test payload has no schedule fields", () => {
   const body = buildPayload({ ...base, channel: "telegram", chatId: "5" }, NOW);
   assert.deepEqual(Object.keys(testPayload(body)).sort(),
-    ["channel", "condition", "max_lines", "name", "query", "telegram_chat_id", "template", "title"]);
+    ["channel", "condition", "custom_message", "default_note", "group_by", "group_order", "max_lines", "min_count", "name", "note_rules", "query", "sort_by", "sort_dir", "telegram_chat_id", "template", "title"]);
 });
 
 test("date tokens: parse, build, limits", () => {
@@ -154,7 +154,7 @@ test("profile keeps valid date tokens and drops invalid ones", () => {
 test("buildCore validates only the schedule-free part", async () => {
   const { reminderBody } = await import("../static/js/lib/reminder-form.js");
   const core = buildCore({ name: "T", query: { jql: "x" }, channel: "slack", maxLines: "5" });
-  assert.deepEqual(Object.keys(core).sort(), ["channel", "condition", "max_lines", "name", "query", "telegram_chat_id", "template", "title"]);
+  assert.deepEqual(Object.keys(core).sort(), ["channel", "condition", "custom_message", "default_note", "group_by", "group_order", "max_lines", "min_count", "name", "note_rules", "query", "sort_by", "sort_dir", "telegram_chat_id", "template", "title"]);
   assert.throws(() => buildCore({ name: "", query: { jql: "x" }, channel: "slack", maxLines: "5" }), /tên/);
   assert.throws(() => buildCore({ name: "T", query: { jql: "x" }, channel: "telegram", chatId: "no", maxLines: "5" }), /chat_id/);
   const r = { name: "N", enabled: true, query: {}, template: "t", channel: "slack", telegram_chat_id: null, schedule_kind: "once",
@@ -242,4 +242,71 @@ test("title is part of the core payload and trims to null", () => {
   assert.equal(core.title, "{name} {count}");
   assert.equal(buildCore({ name: "T", query: { jql: "x" }, channel: "slack", maxLines: "5", title: "  " }).title, null);
   assert.equal(testPayload({ ...core, extra: 1 }).title, "{name} {count}");
+});
+
+import { CONDITIONS, MAX_RULES, conditionText, newRule, normalizeRules, ruleSummary, splitValues } from "../static/js/lib/reminder-form.js";
+
+const rule = (over = {}) => ({ field: "status", op: "in", values: ["Done"], action: "note", text: "Done pilot", ...over });
+const core = (over = {}) => ({ name: "T", query: { jql: "x" }, channel: "slack", maxLines: "5", ...over });
+
+test("splitValues accepts commas, semicolons and newlines", () => {
+  assert.deepEqual(splitValues(" Done, Closed;Resolved\n In Review ,, "), ["Done", "Closed", "Resolved", "In Review"]);
+  assert.deepEqual(splitValues(""), []);
+  assert.deepEqual(splitValues(null), []);
+});
+
+test("normalizeRules cleans valid rules", () => {
+  assert.deepEqual(normalizeRules([rule({ values: " Done , Closed ", text: "  ok  " })]),
+    [{ field: "status", op: "in", values: ["Done", "Closed"], action: "note", text: "ok" }]);
+  assert.deepEqual(normalizeRules([rule({ op: "empty", values: ["x"], field: "assignee" })])[0].values, []);
+  assert.deepEqual(normalizeRules([rule({ op: "contains", values: ["a", "b"] })])[0].values, ["a"]);
+  const hide = normalizeRules([rule({ action: "hide", text: "ignored" })])[0];
+  assert.deepEqual([hide.action, hide.text], ["hide", ""]);
+  assert.deepEqual(normalizeRules(undefined), []);
+});
+
+test("normalizeRules reports the first bad rule by number", () => {
+  assert.throws(() => normalizeRules([rule(), rule({ field: "" })]), /Quy tắc 2: hãy chọn field/);
+  assert.throws(() => normalizeRules([rule({ op: "like" })]), /Quy tắc 1: hãy chọn phép/);
+  assert.throws(() => normalizeRules([rule({ values: [] })]), /Quy tắc 1: hãy nhập giá trị/);
+  assert.throws(() => normalizeRules([rule({ text: "x".repeat(201) })]), /tối đa 200/);
+  assert.throws(() => normalizeRules(Array.from({ length: MAX_RULES + 1 }, () => rule())), /Tối đa 20/);
+});
+
+test("buildCore carries rules, grouping, conditions and the hand-written message", () => {
+  const c = buildCore(core({ noteRules: [rule()], defaultNote: " mặc định ", groupBy: "status", groupOrder: "count", sortBy: "created",
+    sortDir: "desc", condition: "min_count", minCount: "3", customMessage: "viết tay" }));
+  assert.equal(c.note_rules.length, 1);
+  assert.deepEqual([c.default_note, c.group_by, c.group_order, c.sort_by, c.sort_dir, c.condition, c.min_count, c.custom_message],
+    ["mặc định", "status", "count", "created", "desc", "min_count", 3, "viết tay"]);
+  const d = buildCore(core());
+  assert.deepEqual([d.note_rules, d.default_note, d.group_by, d.group_order, d.sort_by, d.sort_dir, d.condition, d.min_count, d.custom_message],
+    [[], null, null, "name", null, "asc", "always", 1, null]);
+  assert.equal(buildCore(core({ condition: "bogus" })).condition, "always");
+  assert.equal(buildCore(core({ condition: "if_changed", minCount: "9" })).min_count, 1);       // N only matters for min_count
+  assert.equal(buildCore(core({ customMessage: "   " })).custom_message, null);
+  assert.throws(() => buildCore(core({ condition: "min_count", minCount: "0" })), /từ 1 đến 1000/);
+  assert.throws(() => buildCore(core({ condition: "min_count", minCount: "abc" })), /từ 1 đến 1000/);
+  assert.throws(() => buildCore(core({ defaultNote: "x".repeat(201) })), /Ghi chú mặc định/);
+  assert.throws(() => buildCore(core({ noteRules: [rule({ values: [] })] })), /Quy tắc 1/);
+});
+
+test("rule and condition text", () => {
+  assert.equal(ruleSummary(rule(), "Status"), 'Status là Done → "Done pilot"');
+  assert.equal(ruleSummary(rule({ op: "empty", values: [], field: "assignee", action: "hide" }), "Assignee"), "Assignee trống → ẩn dòng");
+  assert.equal(conditionText({ condition: "min_count", min_count: 5 }), "Từ 5 issue trở lên");
+  assert.equal(conditionText({ condition: "if_changed" }), "Khi danh sách thay đổi");
+  assert.equal(conditionText({}), "Luôn gửi");
+  assert.deepEqual(CONDITIONS.map((c) => c.id), ["always", "only_if_results", "min_count", "if_changed", "if_rule"]);
+  assert.deepEqual(newRule("assignee"), { field: "assignee", op: "in", values: [], action: "note", text: "" });
+});
+
+test("reminderBody and runStatusText know the new fields", async () => {
+  const { reminderBody, runStatusText } = await import("../static/js/lib/reminder-form.js");
+  const body = reminderBody({ name: "N", enabled: true, query: {}, template: "t", channel: "slack", schedule_kind: "weekly", days: [0], time: "09:00",
+    condition: "if_rule", max_lines: 5, note_rules: [rule()], group_by: "status", state: "active", next_run: "x", last_signature: "s" });
+  assert.deepEqual([body.min_count, body.group_by, body.group_order, body.sort_dir, body.custom_message, body.note_rules.length], [1, "status", "name", "asc", null, 1]);
+  assert.equal("state" in body || "last_signature" in body, false);
+  assert.equal(runStatusText("skipped_unchanged"), "Bỏ qua (danh sách không đổi)");
+  assert.equal(runStatusText("skipped_condition"), "Bỏ qua (chưa đủ điều kiện)");
 });

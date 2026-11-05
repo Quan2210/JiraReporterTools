@@ -3,11 +3,13 @@ import { createDateField } from "./datefield.js";
 import { $, choose, el, setMsg } from "./dom.js";
 import { iconSvg } from "./icons.js";
 import { meta } from "./meta.js";
+import { MultiSelect } from "./multiselect.js";
 import { attachVarPicker, varButton } from "./varpicker.js";
 import { isoToDisplay } from "./lib/dates.js";
 import {
   DAY_LABELS, DEFAULT_REMINDER_TEMPLATE, buildCore, buildPayload, defaultRunAt, duplicateDraft, queryChips, queryWarnings,
   reminderActions, reminderBody, reminderQuery, runStatusText, scheduleSummary, stateText, templateVariables, TITLE_VARIABLES,
+  CONDITIONS, MAX_RULES, RULE_ACTIONS, RULE_OPS, conditionText, newRule, ruleSummary, splitValues,
 } from "./lib/reminder-form.js";
 
 const putJson = (path, body) => api(path, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -192,7 +194,18 @@ export function createReminders({ getQuery, activeCount }) {
     $("rd-schedule").textContent = scheduleSummary(r);
     $("rd-next").textContent = r.next_run ? `Kế tiếp: ${shortTime(r.next_run)}` : "Không có lần chạy kế tiếp";
     $("rd-channel").textContent = `${CHANNEL_NAMES[r.channel] ?? r.channel}${r.telegram_chat_id ? ` · ${r.telegram_chat_id}` : ""}`;
-    $("rd-cond").textContent = `${r.condition === "only_if_results" ? "Chỉ gửi khi có issue" : "Luôn gửi"} · tối đa ${r.max_lines} dòng`;
+    $("rd-cond").textContent = `${conditionText(r)} · tối đa ${r.max_lines} dòng`;
+    const nameOf = (id) => meta.fieldById[id]?.name ?? id;
+    const notes = [
+      ...(r.note_rules ?? []).map((rule) => ruleSummary(rule, nameOf(rule.field))),
+      ...(r.default_note ? [`Còn lại → "${r.default_note}"`] : []),
+      ...(r.group_by ? [`Nhóm theo ${nameOf(r.group_by)} (${r.group_order === "count" ? "nhiều issue trước" : "theo tên"})`] : []),
+      ...(r.sort_by ? [`Sắp xếp theo ${nameOf(r.sort_by)} (${r.sort_dir === "desc" ? "giảm dần" : "tăng dần"})`] : []),
+    ];
+    $("rd-rules-card").hidden = notes.length === 0;
+    $("rd-rules").replaceChildren(...notes.map((text) => el("li", { text })));
+    $("rd-custom-card").hidden = !r.custom_message;
+    $("rd-custom").textContent = r.custom_message ?? "";
     fillFilter($("rd-filter"), r.query);
     $("rd-template").textContent = `${r.title ? `${r.title}\n` : ""}${r.template}`;
     $("rd-runs").replaceChildren(el("li", { class: "muted", text: "Đang tải…" }));
@@ -364,6 +377,12 @@ export function createReminders({ getQuery, activeCount }) {
     const once = kind() === "once";
     $("rem-weekly").hidden = once;
     $("rem-once").hidden = !once;
+    $("rem-preview-edit").hidden = !once;
+    if (!once && manual) {                                  // a hand-written message is for a single send only
+      setManual(false);
+      $("rem-preview").value = "";
+      setMsg("Tin viết tay chỉ dùng cho nhắc nhở một lần.", "err");
+    }
   }
 
   function syncChannel() {
@@ -374,6 +393,147 @@ export function createReminders({ getQuery, activeCount }) {
   function closeJqlBox() {
     $("rem-jql-box").hidden = true;
     $("rem-edit-jql").setAttribute("aria-pressed", "false");
+  }
+
+  // ---- note rules, grouping, send condition, hand-written message --------------------------------------------------
+
+  let rules = [];                                // editing copy of the note rules
+  let manual = false;                            // the preview text is hand-written (one-time reminders only)
+  let ruleViews = [];                            // {rule, picker, ms} of the rows on screen
+  let ruleSeq = 0;
+  const fieldList = () => [{ id: "status", name: "Status" }, ...meta.fields.filter((f) => f.id !== "status" && f.id !== "issuekey")];
+  const fieldName = (id) => meta.fieldById[id]?.name ?? id;
+
+  const fillConditions = () => $("rem-condition").replaceChildren(...CONDITIONS.map((c) => el("option", { value: c.id, text: c.label })));
+  fillConditions();
+  const syncCondition = () => { $("rem-min-count").hidden = $("rem-condition").value !== "min_count"; };
+  $("rem-condition").addEventListener("change", () => { syncCondition(); touched(); });
+  $("rem-min-count").addEventListener("input", () => touched());
+
+  function fillFieldSelect(select, current, { none = false } = {}) {
+    const options = fieldList();
+    if (current && !options.some((f) => f.id === current)) options.push({ id: current, name: current });
+    select.replaceChildren(...(none ? [el("option", { value: "", text: "Không" })] : []),
+      ...options.map((f) => el("option", { value: f.id, text: f.custom ? `${f.name} (custom)` : f.name })));
+    select.value = current ?? (none ? "" : "status");
+  }
+
+  function updateSectionBadges() {
+    $("rem-rules-count").textContent = rules.length ? String(rules.length) : "";
+    $("rem-group-count").textContent = $("rem-group-by").value || $("rem-sort-by").value ? "●" : "";
+  }
+
+  function touched() { markStale(); updateSectionBadges(); }
+
+  const suggest = (field) => async (q) =>
+    (await getJson(`/api/meta/suggest?field=${encodeURIComponent(field)}&q=${encodeURIComponent(q)}`)).map((v) => ({ value: v, label: v }));
+
+  /** One rule as a sentence: "Khi [field] [op] [values]" / "Thì [action] [text]". The row keeps its controls
+   *  alive; only add / delete / reorder rebuild the list. */
+  function ruleView(rule) {
+    const field = el("select", { class: "rule-field", "aria-label": "Field" });
+    fillFieldSelect(field, rule.field);
+    const op = el("select", { class: "rule-op", "aria-label": "Phép so sánh" }, ...RULE_OPS.map((o) => el("option", { value: o.id, text: o.label })));
+    op.value = rule.op;
+    const host = el("div", { class: "rule-values" });
+    const ms = new MultiSelect(host, { placeholder: "Chọn hoặc gõ giá trị, Enter để thêm", allowCustom: true, onChange: () => { rule.values = ms.values(); touched(); } });
+    const contains = el("input", { type: "text", class: "rule-contains", placeholder: "Từ cần tìm", "aria-label": "Từ cần tìm", autocomplete: "off" });
+    const action = el("select", { class: "rule-action", "aria-label": "Hành động" }, ...RULE_ACTIONS.map((a) => el("option", { value: a.id, text: a.label })));
+    action.value = rule.action;
+    const text = el("input", { type: "text", class: "rule-text", maxLength: 200, placeholder: "Nội dung ghi chú, gõ { để chèn biến", "aria-label": "Nội dung ghi chú", autocomplete: "off", value: rule.text ?? "" });
+    text.id = `rem-rule-text-${++ruleSeq}`;
+    const hint = el("span", { class: "muted rule-hint", text: "Issue này sẽ không xuất hiện trong tin" });
+    const picker = attachVarPicker(text, null, () => templateVariables(meta.fields));
+
+    function configure() {                                    // the value list depends on the field
+      if (rule.field === "status") {
+        ms.search = null;
+        ms.setOptions(meta.statuses.map((st) => ({ value: st.name, label: st.name })));
+      } else {
+        ms.setOptions([]);
+        ms.search = suggest(rule.field);
+      }
+    }
+    function sync() {                                         // what to show for the current operator / action
+      host.hidden = rule.op !== "in" && rule.op !== "not_in";
+      contains.hidden = rule.op !== "contains";
+      text.hidden = rule.action === "hide";
+      hint.hidden = rule.action !== "hide";
+    }
+    configure();
+    ms.setSelected((rule.values ?? []).map((v) => ({ value: v, label: v })));
+    contains.value = rule.values?.[0] ?? "";
+    sync();
+
+    field.addEventListener("change", () => {
+      rule.field = field.value;
+      rule.values = [];
+      ms.clear();
+      contains.value = "";
+      configure();
+      touched();
+    });
+    op.addEventListener("change", () => {
+      const carry = rule.values ?? [];
+      rule.op = op.value;
+      if (rule.op === "empty" || rule.op === "not_empty") rule.values = [];
+      else if (rule.op === "contains") { rule.values = carry.slice(0, 1); contains.value = rule.values[0] ?? ""; }
+      else { rule.values = carry; ms.setSelected(carry.map((v) => ({ value: v, label: v }))); }
+      sync();
+      touched();
+    });
+    contains.addEventListener("input", () => { rule.values = splitValues(contains.value).slice(0, 1); touched(); });
+    action.addEventListener("change", () => { rule.action = action.value; sync(); touched(); });
+    text.addEventListener("input", () => { rule.text = text.value; touched(); });
+
+    const move = (by) => () => {
+      const i = rules.indexOf(rule);
+      const j = i + by;
+      if (j < 0 || j >= rules.length) return;
+      [rules[i], rules[j]] = [rules[j], rules[i]];
+      renderRules();
+      touched();
+    };
+    const i = rules.indexOf(rule);
+    const node = el("div", { class: "rem-rule" },
+      el("span", { class: "rule-n", text: String(i + 1) }),
+      el("div", { class: "rule-body" },
+        el("div", { class: "rule-line" }, el("span", { class: "rule-lbl", text: "Khi" }), field, op, host, contains),
+        el("div", { class: "rule-line" }, el("span", { class: "rule-lbl", text: "Thì" }), action, text, hint)),
+      el("div", { class: "rule-tools" },
+        iconButton("up", "Lên", move(-1), { disabled: i === 0 }),
+        iconButton("down", "Xuống", move(1), { disabled: i === rules.length - 1 }),
+        iconButton("trash", "Xóa quy tắc", () => { rules.splice(rules.indexOf(rule), 1); renderRules(); touched(); }, { danger: true })));
+    return { rule, picker, ms, node };
+  }
+
+  function renderRules() {
+    for (const view of ruleViews) { view.picker.destroy(); view.ms.destroy(); }
+    ruleViews = rules.map(ruleView);
+    $("rem-rules").replaceChildren(...ruleViews.map((v) => v.node));
+    $("rem-rules-empty").hidden = rules.length > 0;
+    $("rem-rule-add").disabled = rules.length >= MAX_RULES;
+    updateSectionBadges();
+  }
+
+  $("rem-rule-add").addEventListener("click", () => {
+    if (rules.length >= MAX_RULES) return;
+    rules.push(newRule());
+    renderRules();
+    $("rem-rules-box").open = true;
+    touched();
+    $("rem-rules").lastElementChild?.querySelector("input:not([hidden])")?.focus();
+  });
+  for (const id of ["rem-default-note", "rem-group-order", "rem-sort-dir"]) $(id).addEventListener("input", touched);
+  for (const id of ["rem-group-by", "rem-sort-by"]) $(id).addEventListener("change", touched);
+
+  function setManual(on) {
+    manual = on;
+    $("rem-preview").readOnly = !on;
+    $("rem-preview-edit").setAttribute("aria-pressed", String(on));
+    $("rem-preview-tag").hidden = !on;
+    $("rem-preview").classList.remove("stale");
+    if (on) $("rem-decision").hidden = true;
   }
 
   function openForm(reminder, query) {
@@ -394,9 +554,22 @@ export function createReminders({ getQuery, activeCount }) {
     $("rem-template").value = reminder?.template ?? DEFAULT_REMINDER_TEMPLATE;
     $("rem-title").value = reminder?.title ?? "";
     $("rem-condition").value = reminder?.condition ?? "always";
+    $("rem-min-count").value = String(reminder?.min_count ?? 1);
+    syncCondition();
     $("rem-maxlines").value = String(reminder?.max_lines ?? 30);
-    $("rem-preview").value = "";
+    rules = (reminder?.note_rules ?? []).map((r) => ({ ...r, values: [...(r.values ?? [])] }));
+    $("rem-default-note").value = reminder?.default_note ?? "";
+    fillFieldSelect($("rem-group-by"), reminder?.group_by ?? "", { none: true });
+    fillFieldSelect($("rem-sort-by"), reminder?.sort_by ?? "", { none: true });
+    $("rem-group-order").value = reminder?.group_order ?? "name";
+    $("rem-sort-dir").value = reminder?.sort_dir ?? "asc";
+    renderRules();
+    $("rem-rules-box").open = rules.length > 0 || !!reminder?.default_note;
+    $("rem-group-box").open = !!(reminder?.group_by || reminder?.sort_by);
+    $("rem-preview").value = reminder?.custom_message ?? "";
     $("rem-preview").classList.remove("stale");
+    $("rem-decision").hidden = true;
+    setManual(!!reminder?.custom_message && reminder?.schedule_kind === "once");
     closeJqlBox();
     $("rem-form-title").textContent = reminder?.id ? "Sửa nhắc nhở" : reminder ? "Nhân bản nhắc nhở" : "Nhắc nhở mới";
     showQuery();
@@ -408,7 +581,10 @@ export function createReminders({ getQuery, activeCount }) {
   const formValues = () => ({
     name: $("rem-name").value, enabled: $("rem-enabled").checked, query: editing.query, template: $("rem-template").value,
     title: $("rem-title").value,
-    channel: $("rem-channel").value, chatId: $("rem-chat").value, condition: $("rem-condition").value, maxLines: $("rem-maxlines").value,
+    channel: $("rem-channel").value, chatId: $("rem-chat").value, condition: $("rem-condition").value, minCount: $("rem-min-count").value,
+    maxLines: $("rem-maxlines").value, noteRules: rules, defaultNote: $("rem-default-note").value,
+    groupBy: $("rem-group-by").value, groupOrder: $("rem-group-order").value, sortBy: $("rem-sort-by").value, sortDir: $("rem-sort-dir").value,
+    customMessage: manual && kind() === "once" ? $("rem-preview").value : "",
     scheduleKind: kind(), days: selectedDays(), time: $("rem-time").value, runDate: onceDate.value,
   });
 
@@ -494,22 +670,60 @@ export function createReminders({ getQuery, activeCount }) {
     if (previewBox.classList.contains("full")) { e.preventDefault(); setPreviewFull(false); }
   });
   $("dlg-reminder-form").addEventListener("close", () => setPreviewFull(false));
-  const markStale = () => { if ($("rem-preview").value) $("rem-preview").classList.add("stale"); };
+  function markStale() { if (!manual && $("rem-preview").value) $("rem-preview").classList.add("stale"); }
   for (const id of ["rem-name", "rem-title", "rem-template", "rem-maxlines"]) $(id).addEventListener("input", markStale);
 
-  $("rem-preview-btn").addEventListener("click", async () => {
+  const previewBody = () => {
+    const core = buildCore({ ...formValues(), customMessage: "", channel: "slack" })   // the channel does not matter for a preview;
+    return {
+      query: core.query, template: core.template, title: core.title, name: core.name, max_lines: core.max_lines, condition: core.condition,
+      min_count: core.min_count, note_rules: core.note_rules, default_note: core.default_note, group_by: core.group_by,
+      group_order: core.group_order, sort_by: core.sort_by, sort_dir: core.sort_dir,
+    };
+  };
+
+  async function runPreview() {
+    let body;
+    try { body = previewBody(); } catch (e) { setMsg(e.message, "err"); return false; }
     setMsg("Đang chạy bộ lọc…");
     try {
-      const r = await (await postJson("/api/reminders/preview", {
-        query: editing.query, template: $("rem-template").value.trim() || DEFAULT_REMINDER_TEMPLATE, max_lines: Number($("rem-maxlines").value) || 30,
-        title: $("rem-title").value.trim() || null, name: $("rem-name").value.trim() || "Xem trước",
-      })).json();
+      const r = await (await postJson("/api/reminders/preview", body)).json();
       $("rem-preview").value = r.text;
       $("rem-preview").classList.remove("stale");
+      const decision = $("rem-decision");
+      decision.hidden = manual;
+      decision.className = `rem-decision${r.decision.send ? "" : " no"}`;
+      decision.textContent = r.decision.send
+        ? `Sẽ gửi · ${r.row_count} issue${r.hidden ? ` · ẩn ${r.hidden}` : ""}${r.matched ? ` · ${r.matched} khớp quy tắc` : ""}`
+        : `Sẽ không gửi: ${r.decision.reason} (${r.row_count} issue${r.hidden ? `, ẩn ${r.hidden}` : ""})`;
       setMsg("");
+      return true;
     } catch (e) {
       setMsg(e.message, "err");
+      return false;
     }
+  }
+
+  $("rem-preview-btn").addEventListener("click", async () => {
+    if (manual && $("rem-preview").value.trim()) {
+      const answer = await choose("Tạo lại nội dung?", [el("p", { text: "Nội dung bạn đã sửa tay sẽ bị thay bằng tin tạo từ bộ lọc và mẫu hiện tại." })],
+        [{ label: "Tạo lại", value: "yes", primary: true }, { label: "Giữ", value: "no" }]);
+      if (answer !== "yes") return;
+    }
+    await runPreview();
+  });
+
+  // One-time reminders only: write the message by hand; it is sent exactly as written (no query, no rules).
+  $("rem-preview-edit").addEventListener("click", async () => {
+    if (!manual) {
+      if (!$("rem-preview").value.trim()) await runPreview();           // start from the generated message
+      setManual(true);
+      $("rem-preview").focus();
+      return;
+    }
+    const answer = await choose("Bỏ tin viết tay?", [el("p", { text: "Nội dung bạn đã sửa sẽ mất. Tin sẽ được tạo từ bộ lọc, mẫu và quy tắc như bình thường." })],
+      [{ label: "Bỏ", value: "yes", primary: true }, { label: "Giữ", value: "no" }]);
+    if (answer === "yes") { setManual(false); $("rem-preview").value = ""; }
   });
 
   $("rem-send-test").addEventListener("click", async () => {
@@ -530,7 +744,10 @@ export function createReminders({ getQuery, activeCount }) {
 
   $("rem-save").addEventListener("click", async () => {
     let body;
-    try { body = buildPayload(formValues()); } catch (e) { setMsg(e.message, "err"); return; }
+    try {
+      if (manual && kind() === "once" && !$("rem-preview").value.trim()) throw new Error("Tin viết tay đang trống: hãy nhập nội dung hoặc bỏ chế độ sửa tay.");
+      body = buildPayload(formValues());
+    } catch (e) { setMsg(e.message, "err"); return; }
     try {
       const saved = await (await (editing.id ? putJson(`/api/reminders/${editing.id}`, body) : postJson("/api/reminders", body))).json();
       selectedId = saved.id;

@@ -30,6 +30,8 @@ export const ICONS = {
   code: svg('<path d="M8 8l-5 4 5 4M16 8l5 4-5 4M14 5l-4 14"/>'),
   filter: svg('<path d="M3 5h18l-7 8v6l-4-2v-4L3 5z"/>'),
   info: svg('<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>'),
+  up: svg('<path d="M6 15l6-6 6 6"/>'),
+  down: svg('<path d="M6 9l6 6 6-6"/>'),
   chat: svg('<path d="M4 5h16v11H10l-5 4v-4H4V5z"/>'),
 };
 

@@ -8,9 +8,10 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import AfterValidator, BaseModel, Field, ValidationError, field_validator, model_validator
 
 from app.channels import telegram_chats
+from app.note_rules import MAX_RULES
 from app.reminder_schedule import next_run, parse_run_at, to_iso
 from app.reminder_store import ReminderLimitError
-from app.schemas import query_for_storage
+from app.schemas import FIELD_ID_RE, query_for_storage
 
 router = APIRouter(prefix="/api")
 
@@ -19,6 +20,8 @@ RUN_AT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d$")
 CHAT_ID_RE = re.compile(r"^-?\d{1,20}$")
 DEFAULT_TEMPLATE = "{key}: {summary} [{status}] {url}"
 MAX_QUERY_JSON_BYTES = 32 * 1024
+MAX_CUSTOM_MESSAGE = 20000
+Condition = Literal["always", "only_if_results", "min_count", "if_changed", "if_rule"]
 
 
 def _check_query(value: dict[str, Any]) -> dict[str, Any]:
@@ -36,17 +39,76 @@ def _check_query(value: dict[str, Any]) -> dict[str, Any]:
 QueryDict = Annotated[dict[str, Any], AfterValidator(_check_query)]
 
 
-class ReminderCore(BaseModel):
+def _blank_to_none(value: str | None) -> str | None:
+    value = (value or "").strip()
+    return value or None
+
+
+class NoteRule(BaseModel):
+    """When `field` matches, set the row's {note} to `text` (action "note") or leave the row out (action "hide")."""
+
+    field: str
+    op: Literal["in", "not_in", "contains", "empty", "not_empty"]
+    values: list[str] = Field(default_factory=list, max_length=20)
+    action: Literal["note", "hide"] = "note"
+    text: str = Field(default="", max_length=200)
+
+    @model_validator(mode="after")
+    def _check(self):
+        if not FIELD_ID_RE.match(self.field):
+            raise ValueError(f"Mã field không hợp lệ: {self.field!r}")
+        self.values = [v.strip() for v in self.values if v.strip()]
+        if any(len(v) > 255 for v in self.values):
+            raise ValueError("Giá trị điều kiện quá dài")
+        if self.op in ("empty", "not_empty"):
+            self.values = []
+        elif not self.values:
+            raise ValueError("Quy tắc cần ít nhất một giá trị")
+        elif self.op == "contains":
+            self.values = self.values[:1]
+        if self.action == "hide":
+            self.text = ""
+        return self
+
+
+class MessageOptions(BaseModel):
+    """How the message is written: line template, title, per-row note rules, grouping and sorting."""
+
+    template: str = Field(default=DEFAULT_TEMPLATE, min_length=1, max_length=1000)
+    title: str | None = Field(default=None, max_length=200)      # message title template; empty = default
+    max_lines: int = Field(default=30, ge=1, le=100)
+    note_rules: list[NoteRule] = Field(default_factory=list, max_length=MAX_RULES)
+    default_note: str | None = Field(default=None, max_length=200)
+    group_by: str | None = None
+    group_order: Literal["name", "count"] = "name"
+    sort_by: str | None = None
+    sort_dir: Literal["asc", "desc"] = "asc"
+
+    @field_validator("title", "default_note")
+    @classmethod
+    def _text(cls, value: str | None) -> str | None:
+        return _blank_to_none(value)
+
+    @field_validator("group_by", "sort_by")
+    @classmethod
+    def _field(cls, value: str | None) -> str | None:
+        value = _blank_to_none(value)
+        if value is not None and not FIELD_ID_RE.match(value):
+            raise ValueError(f"Mã field không hợp lệ: {value!r}")
+        return value
+
+
+class ReminderCore(MessageOptions):
     """Everything about a reminder except its schedule; also the body of "send a test now"."""
 
     name: str = Field(min_length=1, max_length=100)
     query: QueryDict
-    template: str = Field(default=DEFAULT_TEMPLATE, min_length=1, max_length=1000)
-    title: str | None = Field(default=None, max_length=200)      # message title template; empty = default
     channel: Literal["slack", "telegram"]
     telegram_chat_id: str | None = None
-    condition: Literal["always", "only_if_results"] = "always"
-    max_lines: int = Field(default=30, ge=1, le=100)
+    condition: Condition = "always"
+    min_count: int = Field(default=1, ge=1, le=1000)
+    # One-time reminders only: the message text written by hand, sent exactly as it is (no query, no rules).
+    custom_message: str | None = Field(default=None, max_length=MAX_CUSTOM_MESSAGE)
 
     @field_validator("name")
     @classmethod
@@ -56,11 +118,10 @@ class ReminderCore(BaseModel):
             raise ValueError("Tên nhắc nhở không được để trống")
         return value
 
-    @field_validator("title")
+    @field_validator("custom_message")
     @classmethod
-    def _title(cls, value: str | None) -> str | None:
-        value = (value or "").strip()
-        return value or None
+    def _custom(cls, value: str | None) -> str | None:
+        return value if value and value.strip() else None
 
     @model_validator(mode="after")
     def _channel(self):
@@ -103,15 +164,15 @@ class ReminderIn(ReminderCore):
             if not self.time or not TIME_RE.match(self.time):
                 raise ValueError("Giờ phải có dạng HH:MM")
             self.run_at = None
+            self.custom_message = None      # a hand-written message only makes sense for a single send
         return self
 
 
-class PreviewIn(BaseModel):
+class PreviewIn(MessageOptions):
     query: QueryDict
-    template: str = Field(default=DEFAULT_TEMPLATE, min_length=1, max_length=1000)
-    title: str | None = Field(default=None, max_length=200)
     name: str = Field(default="Xem trước", min_length=1, max_length=100)
-    max_lines: int = Field(default=30, ge=1, le=100)
+    condition: Condition = "always"
+    min_count: int = Field(default=1, ge=1, le=1000)
 
 
 def _service(request: Request):
@@ -120,6 +181,7 @@ def _service(request: Request):
 
 def _decorate(reminder: dict | None) -> dict | None:
     if reminder is not None:
+        reminder.pop("last_signature", None)            # internal bookkeeping, not part of the API
         upcoming = next_run(reminder, datetime.now())
         reminder["next_run"] = to_iso(upcoming) if upcoming else None
     return reminder
@@ -176,7 +238,7 @@ async def create_reminder(body: ReminderIn, request: Request):
 
 @router.post("/reminders/preview")
 async def preview(body: PreviewIn, request: Request):
-    return await _service(request).preview(body.query, body.template, body.max_lines, body.name.strip() or "Xem trước", (body.title or "").strip() or None)
+    return await _service(request).preview(body.model_dump(mode="json"))
 
 
 @router.post("/reminders/send-test")
@@ -208,7 +270,7 @@ async def delete_reminder(reminder_id: int, request: Request):
 
 @router.post("/reminders/{reminder_id}/test")
 async def send_test(reminder_id: int, request: Request):
-    """Send now (ignores the schedule and the only-if-results condition)."""
+    """Send now (ignores the schedule and the send conditions)."""
     service = _service(request)
     reminder = await asyncio.to_thread(service.store.get, reminder_id)
     if reminder is None:

@@ -122,13 +122,23 @@ export function attachVarPicker(input, button, getOptions) {
     else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); input.focus(); }
   });
 
-  document.addEventListener("mousedown", (e) => {
+  const onDocMouseDown = (e) => {
     if (!list.hidden && !list.contains(e.target) && e.target !== input && !button?.contains(e.target)) close();
-  });
+  };
+  const onScroll = (e) => { if (!list.hidden && !list.contains(e.target)) close(); };
+  document.addEventListener("mousedown", onDocMouseDown);
   window.addEventListener("resize", close);
-  document.addEventListener("scroll", (e) => { if (!list.hidden && !list.contains(e.target)) close(); }, true);
+  document.addEventListener("scroll", onScroll, true);
 
-  return { close, element: list };
+  /** Remove the list and every global listener (call when the input is thrown away). */
+  function destroy() {
+    document.removeEventListener("mousedown", onDocMouseDown);
+    window.removeEventListener("resize", close);
+    document.removeEventListener("scroll", onScroll, true);
+    list.remove();
+  }
+
+  return { close, destroy, element: list };
 }
 
 /** The "+" icon button that goes next to a variable-aware input. */

@@ -6,6 +6,7 @@ export const DAY_LABELS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"];   // index
 export const REMINDER_COLUMNS = ["issuekey", "summary", "status"];
 export const DEFAULT_REMINDER_TEMPLATE = "{key}: {summary} [{status}] {url}";
 
+const ID_RE = /^[A-Za-z0-9_.\-]{1,100}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const CHAT_ID_RE = /^-?\d{1,20}$/;
@@ -82,6 +83,58 @@ export function defaultRunAt(now = new Date()) {
   return { date: `${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}`, time: `${pad(next.getHours())}:00` };
 }
 
+// ---- send conditions, note rules, grouping ------------------------------------------------------------------------
+
+export const MAX_RULES = 20;
+export const CONDITIONS = [
+  { id: "always", label: "Luôn gửi" },
+  { id: "only_if_results", label: "Khi có issue" },
+  { id: "min_count", label: "Từ N issue trở lên" },
+  { id: "if_changed", label: "Khi danh sách thay đổi" },
+  { id: "if_rule", label: "Khi có issue khớp quy tắc" },
+];
+export const RULE_OPS = [
+  { id: "in", label: "là" }, { id: "not_in", label: "không phải" }, { id: "contains", label: "chứa" },
+  { id: "empty", label: "trống" }, { id: "not_empty", label: "có giá trị" },
+];
+export const RULE_ACTIONS = [{ id: "note", label: "Ghi chú" }, { id: "hide", label: "Ẩn dòng" }];
+const NO_VALUE_OPS = new Set(["empty", "not_empty"]);
+
+export const newRule = (field = "status") => ({ field, op: "in", values: [], action: "note", text: "" });
+
+/** "Done, Closed" -> ["Done", "Closed"] (comma, semicolon or newline separated). */
+export const splitValues = (text) => String(text ?? "").split(/[,;\n]/).map((s) => s.trim()).filter(Boolean);
+
+/** Validate and clean the rules the form holds. Throws Error "Quy tắc N: ..." for the first bad one. */
+export function normalizeRules(rules) {
+  const list = Array.isArray(rules) ? rules : [];
+  if (list.length > MAX_RULES) throw new Error(`Tối đa ${MAX_RULES} quy tắc.`);
+  return list.map((r, i) => {
+    const at = `Quy tắc ${i + 1}`;
+    if (!ID_RE.test(r?.field ?? "")) throw new Error(`${at}: hãy chọn field.`);
+    if (!RULE_OPS.some((o) => o.id === r.op)) throw new Error(`${at}: hãy chọn phép so sánh.`);
+    const action = r.action === "hide" ? "hide" : "note";
+    const values = NO_VALUE_OPS.has(r.op) ? [] : (Array.isArray(r.values) ? r.values : splitValues(r.values)).map((v) => String(v).trim()).filter(Boolean);
+    if (!NO_VALUE_OPS.has(r.op) && !values.length) throw new Error(`${at}: hãy nhập giá trị so sánh.`);
+    if (values.some((v) => v.length > 255) || values.length > 20) throw new Error(`${at}: giá trị quá dài hoặc quá nhiều.`);
+    const text = action === "hide" ? "" : String(r.text ?? "").trim();
+    if (text.length > 200) throw new Error(`${at}: ghi chú tối đa 200 ký tự.`);
+    return { field: r.field, op: r.op, values: r.op === "contains" ? values.slice(0, 1) : values, action, text };
+  });
+}
+
+/** One-line description of a rule, e.g. `Status là Done → "Done pilot"`. */
+export function ruleSummary(rule, fieldName = rule.field) {
+  const op = RULE_OPS.find((o) => o.id === rule.op)?.label ?? rule.op;
+  const when = `${fieldName} ${op}${rule.values?.length ? ` ${rule.values.join(" / ")}` : ""}`;
+  return `${when} → ${rule.action === "hide" ? "ẩn dòng" : `"${rule.text}"`}`;
+}
+
+export function conditionText(reminder) {
+  const base = CONDITIONS.find((c) => c.id === reminder.condition)?.label ?? "Luôn gửi";
+  return reminder.condition === "min_count" ? `Từ ${reminder.min_count} issue trở lên` : base;
+}
+
 /** The schedule-free part of the form (what "send a test now" needs). Throws Error with a Vietnamese message. */
 export function buildCore(f) {
   const name = String(f.name ?? "").trim();
@@ -95,10 +148,21 @@ export function buildCore(f) {
   const channel = f.channel === "telegram" ? "telegram" : "slack";
   const chatId = String(f.chatId ?? "").trim();
   if (channel === "telegram" && !CHAT_ID_RE.test(chatId)) throw new Error("Kênh Telegram cần chat_id (bấm \"Lấy chat_id\" sau khi nhắn bot).");
+  const condition = CONDITIONS.some((c) => c.id === f.condition) ? f.condition : "always";
+  const minCount = Number(f.minCount ?? 1);
+  if (condition === "min_count" && (!Number.isInteger(minCount) || minCount < 1 || minCount > 1000)) throw new Error("Số issue tối thiểu phải từ 1 đến 1000.");
+  const defaultNote = String(f.defaultNote ?? "").trim();
+  if (defaultNote.length > 200) throw new Error("Ghi chú mặc định tối đa 200 ký tự.");
+  const customMessage = String(f.customMessage ?? "");
+  if (customMessage.length > 20000) throw new Error("Tin nhắn viết tay tối đa 20000 ký tự.");
   return {
     name, query: f.query, template, title: String(f.title ?? "").trim() || null, channel,
     telegram_chat_id: channel === "telegram" ? chatId : null,
-    condition: f.condition === "only_if_results" ? "only_if_results" : "always", max_lines: maxLines,
+    condition, min_count: condition === "min_count" ? minCount : 1, max_lines: maxLines,
+    note_rules: normalizeRules(f.noteRules ?? []), default_note: defaultNote || null,
+    group_by: f.groupBy || null, group_order: f.groupOrder === "count" ? "count" : "name",
+    sort_by: f.sortBy || null, sort_dir: f.sortDir === "desc" ? "desc" : "asc",
+    custom_message: customMessage.trim() ? customMessage : null,
   };
 }
 
@@ -121,12 +185,15 @@ export function buildPayload(f, now = new Date()) {
 
 /** The part of a reminder that "send a test now" needs (no schedule). */
 export function testPayload(body) {
-  const { name, query, template, title, channel, telegram_chat_id, condition, max_lines } = body;
-  return { name, query, template, title, channel, telegram_chat_id, condition, max_lines };
+  const { name, query, template, title, channel, telegram_chat_id, condition, min_count, max_lines, note_rules, default_note,
+    group_by, group_order, sort_by, sort_dir, custom_message } = body;
+  return { name, query, template, title, channel, telegram_chat_id, condition, min_count, max_lines, note_rules, default_note,
+    group_by, group_order, sort_by, sort_dir, custom_message };
 }
 
 const STATUS_TEXT = {
-  sent: "Đã gửi", skipped_empty: "Bỏ qua (không có issue)", failed: "Lỗi", missed: "Lỡ giờ", running: "Đang chạy",
+  sent: "Đã gửi", skipped_empty: "Bỏ qua (không có issue)", skipped_condition: "Bỏ qua (chưa đủ điều kiện)",
+  skipped_unchanged: "Bỏ qua (danh sách không đổi)", failed: "Lỗi", missed: "Lỡ giờ", running: "Đang chạy",
 };
 export const runStatusText = (status) => STATUS_TEXT[status] ?? status;
 
@@ -165,7 +232,9 @@ export function reminderBody(r, patch = {}) {
   return {
     name: r.name, enabled: r.enabled, query: r.query, template: r.template, title: r.title ?? null, channel: r.channel,
     telegram_chat_id: r.telegram_chat_id, schedule_kind: r.schedule_kind, run_at: r.run_at, days: r.days, time: r.time,
-    condition: r.condition, max_lines: r.max_lines, ...patch,
+    condition: r.condition, min_count: r.min_count ?? 1, max_lines: r.max_lines, note_rules: r.note_rules ?? [],
+    default_note: r.default_note ?? null, group_by: r.group_by ?? null, group_order: r.group_order ?? "name",
+    sort_by: r.sort_by ?? null, sort_dir: r.sort_dir ?? "asc", custom_message: r.custom_message ?? null, ...patch,
   };
 }
 

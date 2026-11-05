@@ -1,6 +1,8 @@
-"""Runs one reminder: query Jira -> render the message -> send it -> record the outcome."""
+"""Runs one reminder: query Jira -> apply the rules -> render the message -> send it -> record the outcome."""
 import asyncio
+import hashlib
 import logging
+from dataclasses import dataclass
 
 import httpx
 
@@ -9,6 +11,7 @@ from app.channels import ChannelError, send_slack, send_telegram
 from app.config import Settings
 from app.jira_client import JiraClient, JiraError
 from app.message import BUILTIN_VARIABLES, placeholders, render_line, render_title
+from app.note_rules import Entry, arrange, evaluate
 from app.reminder_store import ReminderStore
 from app.report_service import get_field_meta, run_query
 from app.schemas import ReportQuery
@@ -17,9 +20,82 @@ log = logging.getLogger("jira_report.reminders")
 
 RUN_TIMEOUT_SECONDS = 120
 RETRY_DELAY_SECONDS = 30
-# Rows always carry summary/status/url; the query only needs the key column.
 MAX_EXTRA_COLUMNS = 30
+# Rows always carry summary/status/url; the query only needs these base columns.
 REMINDER_COLUMNS = ["issuekey", "summary", "status"]
+
+SKIP_REASONS = {
+    "skipped_empty": "Không có issue nào",
+    "skipped_condition": "Chưa đủ điều kiện gửi",
+    "skipped_unchanged": "Danh sách không đổi so với lần gửi trước",
+}
+
+
+@dataclass
+class Prepared:
+    """A query result after the note/hide rules: what the message will contain."""
+    entries: list[Entry]
+    sections: list
+    hidden: int
+    count: int            # issues that would be listed (rows beyond the row limit count as visible)
+    matched: int          # issues a note rule applied to
+    signature: str        # identifies the list (key + status), for "only when the list changed"
+
+
+def prepare(reminder: dict, result: dict) -> Prepared:
+    entries, hidden = evaluate(result["rows"], reminder.get("note_rules") or [], reminder.get("default_note"),
+                               lambda text, row: render_line(text, row))
+    beyond = max(0, result["total"] - len(result["rows"])) if result.get("truncated") else 0
+    sections = arrange(entries, reminder.get("group_by"), reminder.get("group_order") or "name",
+                       reminder.get("sort_by"), reminder.get("sort_dir") or "asc")
+    keys = sorted(f"{e.row.get('key')}|{e.row.get('status')}" for e in entries)
+    return Prepared(
+        entries=entries, sections=sections, hidden=hidden, count=len(entries) + beyond,
+        matched=sum(1 for e in entries if e.matched), signature=hashlib.sha256("\n".join(keys).encode()).hexdigest(),
+    )
+
+
+def fields_used(reminder: dict) -> list[str]:
+    """Jira fields the message needs beyond the base columns: template / note variables, rule fields, group, sort."""
+    names = placeholders(reminder.get("template"))
+    for rule in reminder.get("note_rules") or []:
+        names.append(rule.get("field", ""))
+        names += placeholders(rule.get("text"))
+    names += placeholders(reminder.get("default_note"))
+    names += [reminder.get("group_by") or "", reminder.get("sort_by") or ""]
+    return [n for n in dict.fromkeys(names) if n and n not in BUILTIN_VARIABLES and n not in REMINDER_COLUMNS]
+
+
+def build_text(reminder: dict, prepared: Prepared) -> str:
+    lines = [render_title(reminder.get("title"), reminder["name"], prepared.count)]
+    budget = reminder["max_lines"]
+    shown = 0
+    for name, items in prepared.sections:
+        if budget <= 0:
+            break
+        take = items[:budget]
+        if name is not None:
+            lines.append(f"▸ {name or '(trống)'} ({len(items)})")
+        lines += [render_line(reminder["template"], e.row, e.note) for e in take]
+        budget -= len(take)
+        shown += len(take)
+    if prepared.count > shown:
+        lines.append(f"… và {prepared.count - shown} issue nữa")
+    return "\n".join(lines)
+
+
+def skip_status(reminder: dict, prepared: Prepared, check_changed: bool = True) -> str | None:
+    """Why a (non-forced) run should not send, or None."""
+    condition = reminder.get("condition") or "always"
+    if condition == "only_if_results" and prepared.count == 0:
+        return "skipped_empty"
+    if condition == "min_count" and prepared.count < (reminder.get("min_count") or 1):
+        return "skipped_condition"
+    if condition == "if_rule" and prepared.matched == 0:
+        return "skipped_condition"
+    if condition == "if_changed" and check_changed and prepared.signature == reminder.get("last_signature"):
+        return "skipped_unchanged"
+    return None
 
 
 class ReminderService:
@@ -45,33 +121,36 @@ class ReminderService:
     def is_configured(self, channel: str) -> bool:
         return self.channel_status().get(channel, {}).get("configured", False)
 
-    async def _columns(self, template: str, title: str = "") -> list[str]:
-        """The base columns plus every Jira field the template / title mentions ({assignee}, {created}, ...)."""
-        extra = [n for n in placeholders(template) if n not in BUILTIN_VARIABLES]
-        if not extra:
+    async def _columns(self, template: str, extra=()) -> list[str]:
+        """The base columns plus every known Jira field the message mentions ({assignee}, rule fields, group...)."""
+        wanted = [n for n in dict.fromkeys([*placeholders(template), *extra])
+                  if n and n not in BUILTIN_VARIABLES and n not in REMINDER_COLUMNS]
+        if not wanted:
             return REMINDER_COLUMNS
         known = await get_field_meta(self.client, self.cache)
-        return REMINDER_COLUMNS + [n for n in extra if n in known and n not in REMINDER_COLUMNS][:MAX_EXTRA_COLUMNS]
+        return REMINDER_COLUMNS + [n for n in wanted if n in known][:MAX_EXTRA_COLUMNS]
 
-    async def _query(self, query: dict, template: str = "") -> dict:
-        data = {**query, "columns": await self._columns(template)}
+    async def _query(self, query: dict, template: str = "", extra=()) -> dict:
+        data = {**query, "columns": await self._columns(template, extra)}
         return await run_query(ReportQuery(**data), self.client, self.cache, self.settings)
 
-    @staticmethod
-    def build_text(reminder: dict, result: dict) -> str:
-        rows = result["rows"]
-        shown = rows[: reminder["max_lines"]]
-        total = result["total"] if result.get("truncated") else len(rows)
-        lines = [render_title(reminder.get("title"), reminder["name"], total)]
-        lines += [render_line(reminder["template"], row) for row in shown]
-        if total > len(shown):
-            lines.append(f"… và {total - len(shown)} issue nữa")
-        return "\n".join(lines)
+    async def _fetch(self, reminder: dict) -> dict:
+        return await self._query(reminder["query"], reminder["template"], fields_used(reminder))
 
-    async def preview(self, query: dict, template: str, max_lines: int, name: str = "Xem trước", title: str | None = None) -> dict:
-        result = await self._query(query, template)
-        text = self.build_text({"name": name, "template": template, "max_lines": max_lines, "title": title}, result)
-        return {"text": text, "row_count": len(result["rows"]), "total": result["total"], "jql": result["jql"]}
+    def build_text(self, reminder: dict, result: dict) -> str:
+        return build_text(reminder, prepare(reminder, result))
+
+    async def preview(self, data: dict) -> dict:
+        """What the message would look like (and whether it would be sent) for the form's current values."""
+        reminder = {**data, "id": 0}
+        result = await self._fetch(reminder)
+        prepared = prepare(reminder, result)
+        skip = skip_status(reminder, prepared, check_changed=False)
+        return {
+            "text": build_text(reminder, prepared), "row_count": len(prepared.entries), "total": result["total"],
+            "jql": result["jql"], "hidden": prepared.hidden, "matched": prepared.matched,
+            "decision": {"send": skip is None, "reason": SKIP_REASONS.get(skip) if skip else None},
+        }
 
     async def deliver(self, reminder: dict, text: str) -> None:
         if reminder["channel"] == "slack":
@@ -97,12 +176,20 @@ class ReminderService:
             await self.deliver(reminder, text)
 
     async def _execute(self, reminder: dict, force_send: bool) -> tuple[str, int]:
-        result = await self._query(reminder["query"], reminder["template"])
-        count = len(result["rows"])
-        if count == 0 and reminder["condition"] == "only_if_results" and not force_send:
-            return "skipped_empty", 0
-        await self._deliver_with_retry(reminder, self.build_text(reminder, result))
-        return "sent", count
+        if reminder.get("custom_message") and reminder.get("schedule_kind") == "once":
+            # A hand-edited one-time message is sent exactly as written: no query, no rules, no conditions.
+            await self._deliver_with_retry(reminder, reminder["custom_message"])
+            return "sent", 0
+        result = await self._fetch(reminder)
+        prepared = prepare(reminder, result)
+        if not force_send:
+            skipped = skip_status(reminder, prepared)
+            if skipped:
+                return skipped, prepared.count
+        await self._deliver_with_retry(reminder, build_text(reminder, prepared))
+        if not force_send and reminder.get("id"):
+            self.store.set_signature(reminder["id"], prepared.signature)
+        return "sent", prepared.count
 
     @staticmethod
     def _error_text(exc: BaseException) -> str:
@@ -121,7 +208,7 @@ class ReminderService:
         """Always finishes the run row; never raises (one bad reminder must not stop the others)."""
         try:
             status, count = await asyncio.wait_for(self._execute(reminder, force_send), self.run_timeout)
-            self.store.finish_run(run_id, status, count, None)
+            self.store.finish_run(run_id, status, count, SKIP_REASONS.get(status))
             return status
         except Exception as exc:  # noqa: BLE001
             error = self._error_text(exc)
@@ -132,14 +219,18 @@ class ReminderService:
         return "failed"
 
     async def send_adhoc(self, data: dict) -> dict:
-        """Send once with unsaved settings ("Gửi thử ngay"): same timeout, no retry, no history."""
+        """Send once with unsaved settings ("Gửi thử ngay"): same timeout, no retry, no history, no conditions."""
         reminder = {**data, "id": 0}
 
         async def go() -> int:
-            result = await self._query(reminder["query"], reminder["template"])
+            if reminder.get("custom_message"):
+                await self.deliver(reminder, f"[Gửi thử] {reminder['custom_message']}")
+                return 0
+            result = await self._fetch(reminder)
+            prepared = prepare(reminder, result)
             # the marker goes in front of whatever the title is, even a custom one without {name}
-            await self.deliver(reminder, f"[Gửi thử] {self.build_text(reminder, result)}")
-            return len(result["rows"])
+            await self.deliver(reminder, f"[Gửi thử] {build_text(reminder, prepared)}")
+            return len(prepared.entries)
 
         try:
             count = await asyncio.wait_for(go(), self.run_timeout)

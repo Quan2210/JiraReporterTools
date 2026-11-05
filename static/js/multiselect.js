@@ -29,10 +29,19 @@ export class MultiSelect {
       }
       if (e.key === "Backspace" && !this.input.value && this.selected.length) this.remove(this.selected.at(-1).value);
     });
-    document.addEventListener("click", (e) => { if (!root.contains(e.target)) this.list.hidden = true; });
-    const reposition = () => { if (!this.list.hidden) this.place(); };
-    window.addEventListener("resize", reposition);
-    window.addEventListener("scroll", reposition, { capture: true, passive: true });
+    this.onDocClick = (e) => { if (!root.contains(e.target)) this.list.hidden = true; };
+    this.reposition = () => { if (!this.list.hidden) this.place(); };
+    document.addEventListener("click", this.onDocClick);
+    window.addEventListener("resize", this.reposition);
+    window.addEventListener("scroll", this.reposition, { capture: true, passive: true });
+  }
+
+  /** Detach the global listeners (call when the control is thrown away, e.g. a deleted row). */
+  destroy() {
+    document.removeEventListener("click", this.onDocClick);
+    window.removeEventListener("resize", this.reposition);
+    window.removeEventListener("scroll", this.reposition, { capture: true });
+    this.list.hidden = true;
   }
 
   async refreshOptions() {

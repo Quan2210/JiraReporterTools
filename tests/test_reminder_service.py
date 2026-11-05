@@ -175,7 +175,7 @@ async def test_hung_run_times_out_without_blocking_others(store, make_service):
     service.run_timeout = 0.2
     calls = []
 
-    async def fake_query(query, template=""):
+    async def fake_query(query, template="", extra=()):
         calls.append(1)
         if len(calls) == 1:
             await asyncio.sleep(5)

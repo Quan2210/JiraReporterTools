@@ -28,7 +28,16 @@ CREATE TABLE IF NOT EXISTS reminders (
   updated_at TEXT NOT NULL,
   schedule_kind TEXT NOT NULL DEFAULT 'weekly',
   run_at TEXT,
-  title TEXT
+  title TEXT,
+  note_rules_json TEXT,
+  default_note TEXT,
+  group_by TEXT,
+  group_order TEXT NOT NULL DEFAULT 'name',
+  sort_by TEXT,
+  sort_dir TEXT NOT NULL DEFAULT 'asc',
+  min_count INTEGER NOT NULL DEFAULT 1,
+  last_signature TEXT,
+  custom_message TEXT
 );
 CREATE TABLE IF NOT EXISTS reminder_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,6 +53,22 @@ CREATE TABLE IF NOT EXISTS reminder_runs (
 CREATE UNIQUE INDEX IF NOT EXISTS ux_runs_scheduled
   ON reminder_runs(reminder_id, scheduled_for) WHERE kind = 'scheduled';
 """
+
+# Columns added after the first release: a database created by an older version gets them in init().
+MIGRATIONS = {
+    "schedule_kind": "TEXT NOT NULL DEFAULT 'weekly'",
+    "run_at": "TEXT",
+    "title": "TEXT",                    # message title template; NULL = the default title
+    "note_rules_json": "TEXT",
+    "default_note": "TEXT",
+    "group_by": "TEXT",
+    "group_order": "TEXT NOT NULL DEFAULT 'name'",
+    "sort_by": "TEXT",
+    "sort_dir": "TEXT NOT NULL DEFAULT 'asc'",
+    "min_count": "INTEGER NOT NULL DEFAULT 1",
+    "last_signature": "TEXT",
+    "custom_message": "TEXT",
+}
 
 # Rows that history clean-up must never delete: the one-time reminder's own run (it makes the reminder "done").
 _PROTECTED_RUN = (
@@ -78,6 +103,12 @@ def _row_to_reminder(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "query": json.loads(row["query_json"]),
         "template": row["template"],
         "title": row["title"],
+        "note_rules": json.loads(row["note_rules_json"] or "[]"),
+        "default_note": row["default_note"],
+        "group_by": row["group_by"],
+        "group_order": row["group_order"],
+        "sort_by": row["sort_by"],
+        "sort_dir": row["sort_dir"],
         "channel": row["channel"],
         "telegram_chat_id": row["telegram_chat_id"],
         "schedule_kind": row["schedule_kind"],
@@ -85,10 +116,40 @@ def _row_to_reminder(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "days": json.loads(row["days_json"]),
         "time": row["time_hhmm"],
         "condition": row["condition"],
+        "min_count": row["min_count"],
         "max_lines": row["max_lines"],
+        "custom_message": row["custom_message"],
+        "last_signature": row["last_signature"],
         "active_since": row["active_since"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+    }
+
+
+def _editable(data: dict) -> dict:
+    """The columns a create/update writes (everything except identity, timestamps and the sent-list signature)."""
+    return {
+        "name": data["name"],
+        "enabled": int(data["enabled"]),
+        "query_json": json.dumps(data["query"]),
+        "template": data["template"],
+        "channel": data["channel"],
+        "telegram_chat_id": data["telegram_chat_id"],
+        "days_json": json.dumps(data["days"]),
+        "time_hhmm": data["time"],
+        "condition": data["condition"],
+        "max_lines": data["max_lines"],
+        "schedule_kind": data.get("schedule_kind", "weekly"),
+        "run_at": data.get("run_at"),
+        "title": data.get("title"),
+        "note_rules_json": json.dumps(data.get("note_rules") or []),
+        "default_note": data.get("default_note"),
+        "group_by": data.get("group_by"),
+        "group_order": data.get("group_order") or "name",
+        "sort_by": data.get("sort_by"),
+        "sort_dir": data.get("sort_dir") or "asc",
+        "min_count": data.get("min_count") or 1,
+        "custom_message": data.get("custom_message"),
     }
 
 
@@ -117,12 +178,9 @@ class ReminderStore:
             c.execute("PRAGMA journal_mode = WAL")
             c.executescript(SCHEMA)
             columns = {r["name"] for r in c.execute("PRAGMA table_info(reminders)")}
-            if "schedule_kind" not in columns:       # database created before one-time reminders existed
-                c.execute("ALTER TABLE reminders ADD COLUMN schedule_kind TEXT NOT NULL DEFAULT 'weekly'")
-            if "run_at" not in columns:
-                c.execute("ALTER TABLE reminders ADD COLUMN run_at TEXT")
-            if "title" not in columns:                 # message title template; NULL = the default title
-                c.execute("ALTER TABLE reminders ADD COLUMN title TEXT")
+            for name, ddl in MIGRATIONS.items():
+                if name not in columns:
+                    c.execute(f"ALTER TABLE reminders ADD COLUMN {name} {ddl}")
             c.execute(
                 "UPDATE reminder_runs SET status='failed', finished_at=?, error=? WHERE status='running'",
                 (_now(), "Ứng dụng bị tắt giữa chừng"),
@@ -152,16 +210,13 @@ class ReminderStore:
 
     def create(self, data: dict) -> int:
         now = _now()
+        values = {**_editable(data), "active_since": now, "created_at": now, "updated_at": now}
         with self._conn() as c:
             if c.execute("SELECT COUNT(*) FROM reminders").fetchone()[0] >= MAX_REMINDERS:
                 raise ReminderLimitError(f"Tối đa {MAX_REMINDERS} nhắc nhở")
             cur = c.execute(
-                "INSERT INTO reminders(name, enabled, query_json, template, channel, telegram_chat_id, days_json,"
-                " time_hhmm, condition, max_lines, active_since, created_at, updated_at, schedule_kind, run_at, title)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (data["name"], int(data["enabled"]), json.dumps(data["query"]), data["template"], data["channel"],
-                 data["telegram_chat_id"], json.dumps(data["days"]), data["time"], data["condition"],
-                 data["max_lines"], now, now, now, data.get("schedule_kind", "weekly"), data.get("run_at"), data.get("title")))
+                f"INSERT INTO reminders({', '.join(values)}) VALUES ({', '.join('?' for _ in values)})",
+                list(values.values()))
             return cur.lastrowid
 
     def update(self, reminder_id: int, data: dict) -> bool:
@@ -180,14 +235,16 @@ class ReminderStore:
                 or data["days"] != old["days"] or data["time"] != old["time"]
                 or (data["enabled"] and not old["enabled"])
             )
+            values = {**_editable(data), "active_since": now if restart else old["active_since"], "updated_at": now}
             c.execute(
-                "UPDATE reminders SET name=?, enabled=?, query_json=?, template=?, channel=?, telegram_chat_id=?,"
-                " days_json=?, time_hhmm=?, condition=?, max_lines=?, active_since=?, updated_at=?,"
-                " schedule_kind=?, run_at=?, title=? WHERE id=?",
-                (data["name"], int(data["enabled"]), json.dumps(data["query"]), data["template"], data["channel"],
-                 data["telegram_chat_id"], json.dumps(data["days"]), data["time"], data["condition"],
-                 data["max_lines"], now if restart else old["active_since"], now, kind, run_at, data.get("title"), reminder_id))
+                f"UPDATE reminders SET {', '.join(f'{k}=?' for k in values)} WHERE id=?",
+                [*values.values(), reminder_id])
             return True
+
+    def set_signature(self, reminder_id: int, signature: str) -> None:
+        """Remember the list that was just sent (for the "only when the list changed" condition)."""
+        with self._conn() as c:
+            c.execute("UPDATE reminders SET last_signature=? WHERE id=?", (signature, reminder_id))
 
     def delete(self, reminder_id: int) -> bool:
         with self._conn() as c:
