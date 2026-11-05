@@ -234,6 +234,9 @@
     <div id="rem-form" class="dlg-body">
       <div class="rem-grid">
         <div class="rem-col rem-settings">
+          <details class="rem-block" id="rem-general" open>
+            <summary><span class="ico" data-icon="columns"></span>Thông tin chung</summary>
+            <div class="rem-block-body">
           <label class="field"><span>Tên</span><input type="text" id="rem-name" maxlength="100" autocomplete="off"></label>
           <div class="field"><span>Bộ lọc</span>
             <div class="rem-filter">
@@ -273,6 +276,11 @@
               <button type="button" id="rem-find-chat" class="btn btn-icon" title="Lấy chat_id từ những người đã nhắn bot" aria-label="Lấy chat_id"><span class="ico" data-icon="chat"></span></button></div>
             <select id="rem-chat-pick" hidden aria-label="Chọn chat"></select>
           </div>
+            </div>
+          </details>
+          <details class="rem-block" id="rem-content" open>
+            <summary><span class="ico" data-icon="edit"></span>Cấu hình nội dung tin nhắn</summary>
+            <div class="rem-block-body">
           <div class="field"><label for="rem-title">Tiêu đề tin <button type="button" class="info-tip" tabindex="-1" title="Dòng đầu của tin nhắn. Biến: &#123;name&#125; tên nhắc nhở, &#123;count&#125; số issue, &#123;date&#125; ngày hôm nay. Để trống = &quot;&#123;name&#125; (&#123;count&#125; issue)&quot;." aria-label="Hướng dẫn"><span class="ico" data-icon="info"></span></button></label>
             <div class="rem-inline"><input type="text" id="rem-title" spellcheck="false" maxlength="200" autocomplete="off" placeholder="&#123;name&#125; (&#123;count&#125; issue)">
               <span id="rem-title-add-slot"></span></div></div>
@@ -298,6 +306,8 @@
               <label class="field"><span>Thứ tự nhóm</span><select id="rem-group-order"><option value="name">Theo tên</option><option value="count">Nhiều issue trước</option></select></label>
               <label class="field"><span>Sắp xếp theo</span><select id="rem-sort-by"></select></label>
               <label class="field"><span>Chiều</span><select id="rem-sort-dir"><option value="asc">Tăng dần</option><option value="desc">Giảm dần</option></select></label>
+            </div>
+          </details>
             </div>
           </details>
         </div>

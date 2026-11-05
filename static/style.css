@@ -489,3 +489,10 @@ body[data-view="reminders"] .table-only, body[data-view="reminders"] #tray { dis
 .rem-decision { margin: 0; font-size: 12.5px; color: var(--ink-2); }
 .rem-decision.no { color: var(--err); }
 #rem-preview:not([readonly]) { border-color: var(--primary); }
+.rem-block { border: 1px solid var(--line); border-radius: var(--r-float); background: var(--surface); }
+.rem-block > summary { cursor: pointer; padding: 10px 14px; display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; list-style: none; }
+.rem-block > summary::-webkit-details-marker { display: none; }
+.rem-block > summary::after { content: ""; margin-left: auto; width: 8px; height: 8px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); transition: transform .12s; }
+.rem-block[open] > summary::after { transform: rotate(-135deg); }
+.rem-block[open] > summary { border-bottom: 1px solid var(--line); }
+.rem-block-body { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
