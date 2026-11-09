@@ -141,7 +141,9 @@ project, sprint (hiện sau khi chọn project), label, reporter, assignee (gõ 
 **Xuất / copy — chỉ các dòng được tích chọn**, theo đúng thứ tự đang hiển thị, kèm STT, Ghi chú (và cột *Nhóm* khi đang nhóm):
 - *Xuất CSV* (không lưu màu) và *Xuất Excel* (có màu).
 - *Copy bảng*: dán vào Excel/Google Sheets giữ nguyên màu.
-- *Xuất tin nhắn*: mỗi dòng theo mẫu `{key}:{summary} ==> {note}` (sửa được mẫu; có `{status}`, `{url}`). Ghi chú trống vẫn giữ ` ==> `.
+- *Xuất tin nhắn*: mỗi dòng theo mẫu `{key}:{summary} ==> {note}` (sửa được mẫu; gõ `{` để gợi ý `{status}`, `{url}` và mọi cột đang hiện trong bảng như `{assignee}`, `{created}`). Ghi chú trống vẫn giữ ` ==> `.
+  - **Điều kiện lấy Note:** mục *Điều kiện lấy Note* cho phép đặt các điều kiện giống nhắc nhở (*Khi Status là Done thì Note là "Done pilot"*; phép so sánh là / không phải / chứa / trống / có giá trị; hành động *Ghi chú* hoặc *Ẩn dòng*). Điều kiện xét từ trên xuống, điều kiện đầu tiên khớp được dùng; issue không khớp dùng *Note mặc định* (ô "Còn lại"). **Note bạn đã gõ riêng cho một issue trong bảng luôn được ưu tiên.** Điều kiện chỉ xét được các cột đang hiện trong bảng. Điều kiện được lưu trong hồ sơ.
+  - **Sửa tay:** khung nội dung sửa trực tiếp được (nhãn *Đã sửa tay*). Khi đã sửa, đổi mẫu hoặc điều kiện không ghi đè phần bạn viết; bấm icon làm mới để tạo lại từ mẫu và điều kiện.
 
 **Dashboard:** chọn trục X, Y bất kỳ (cột ngày chọn gom ngày/tuần/tháng), giá trị là số issue hoặc tổng một field số (story points…), dạng ma trận hoặc biểu đồ cột chồng. Click ô ma trận để xem các issue của ô đó trong bảng.
 

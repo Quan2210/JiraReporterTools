@@ -192,19 +192,40 @@
     </form>
   </dialog>
 
-  <dialog id="dlg-message">
-    <form method="dialog">
-      <h3>Xuất tin nhắn</h3>
-      <label class="field"><span>Mẫu <small>{key} {summary} {note} {status} {url}</small></span>
-        <input type="text" id="msg-template" spellcheck="false"></label>
-      <textarea id="msg-text" rows="14" readonly aria-label="Nội dung tin nhắn"></textarea>
-      <div class="dlg-actions">
-        <span id="msg-count" class="muted"></span>
-        <span class="spacer"></span>
-        <button type="button" id="msg-copy" class="btn btn-primary">Copy</button>
-        <button class="btn" value="close">Đóng</button>
-      </div>
-    </form>
+  <dialog id="dlg-message" class="dlg-wide dlg-form dlg-msg">
+    <header class="dlg-head"><h3>Xuất tin nhắn</h3>
+      <button type="button" class="dlg-x" title="Đóng" aria-label="Đóng"><span class="ico" data-icon="close"></span></button></header>
+    <div class="dlg-body msg-body">
+      <div class="field"><label for="msg-template">Mẫu mỗi dòng <button type="button" class="info-tip" tabindex="-1" title="Gõ &#123; để gợi ý: &#123;key&#125; &#123;summary&#125; &#123;status&#125; &#123;url&#125; &#123;note&#125; và các cột đang hiện trong bảng (&#123;assignee&#125;, &#123;created&#125;, ...)." aria-label="Hướng dẫn"><span class="ico" data-icon="info"></span></button></label>
+        <div class="rem-inline"><input type="text" id="msg-template" spellcheck="false" autocomplete="off" placeholder="Gõ &#123; để chọn cột">
+          <span id="msg-template-add-slot"></span></div></div>
+      <details class="rem-section" id="msg-rules-box">
+        <summary><span class="ico" data-icon="filter"></span>Điều kiện lấy Note <span id="msg-rules-count" class="badge badge-quiet"></span>
+          <button type="button" class="info-tip" tabindex="-1" title="Mỗi issue được so với các điều kiện từ trên xuống, điều kiện đầu tiên khớp được dùng. Note điền vào &#123;note&#125;. Note bạn đã gõ riêng cho một issue trong bảng luôn được ưu tiên. &quot;Ẩn dòng&quot; bỏ issue đó khỏi tin." aria-label="Hướng dẫn"><span class="ico" data-icon="info"></span></button></summary>
+        <div class="rem-section-body">
+          <p id="msg-rules-empty" class="hint">Chưa có điều kiện. Ví dụ: khi Status là Done thì Note là "Done pilot".</p>
+          <div id="msg-rules" class="rem-rules"></div>
+          <div class="rem-rules-foot">
+            <button type="button" id="msg-rule-add" class="btn btn-icon" title="Thêm điều kiện" aria-label="Thêm điều kiện"><span class="ico" data-icon="plus"></span></button>
+            <label class="rem-default-note"><span>Còn lại</span><input type="text" id="msg-default-note" maxlength="200" autocomplete="off" placeholder="Note mặc định (để trống = dùng Note gõ trong bảng)"></label>
+          </div>
+        </div>
+      </details>
+      <section class="msg-text-wrap" aria-label="Nội dung tin nhắn">
+        <header class="rem-preview-head">
+          <h4><span class="ico" data-icon="edit"></span>Nội dung</h4>
+          <span id="msg-tag" class="rem-tag" hidden>Đã sửa tay</span>
+          <span class="spacer"></span>
+          <button type="button" id="msg-regen" class="btn btn-icon" title="Tạo lại từ mẫu và điều kiện (bỏ phần đã sửa tay)" aria-label="Tạo lại nội dung"><span class="ico" data-icon="refresh"></span></button>
+        </header>
+        <textarea id="msg-text" aria-label="Nội dung tin nhắn (sửa được)" spellcheck="false"></textarea>
+      </section>
+    </div>
+    <div class="dlg-actions dlg-foot">
+      <span id="msg-count" class="muted"></span>
+      <span class="spacer"></span>
+      <button type="button" id="msg-copy" class="btn btn-primary" title="Copy nội dung" aria-label="Copy"><span class="ico" data-icon="copy"></span>Copy</button>
+    </div>
   </dialog>
 
   <dialog id="dlg-reminder-detail" class="dlg-wide dlg-detail">

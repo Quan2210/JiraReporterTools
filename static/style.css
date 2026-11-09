@@ -496,3 +496,7 @@ body[data-view="reminders"] .table-only, body[data-view="reminders"] #tray { dis
 .rem-block[open] > summary::after { transform: rotate(-135deg); }
 .rem-block[open] > summary { border-bottom: 1px solid var(--line); }
 .rem-block-body { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+dialog.dlg-form.dlg-msg { width: min(960px, 96vw); }
+.msg-body { gap: 12px; }
+.msg-text-wrap { flex: 1; min-height: 240px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+#msg-text { flex: 1; min-height: 0; margin: 0; resize: none; }

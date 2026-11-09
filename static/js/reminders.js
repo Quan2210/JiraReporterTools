@@ -1,29 +1,19 @@
 import { api, getJson, postJson } from "./api.js";
 import { createDateField } from "./datefield.js";
-import { $, choose, el, setMsg } from "./dom.js";
-import { iconSvg } from "./icons.js";
+import { $, choose, el, icon, iconButton, setMsg } from "./dom.js";
 import { meta } from "./meta.js";
-import { MultiSelect } from "./multiselect.js";
+import { allFieldOptions, createRulesEditor } from "./rules-editor.js";
 import { attachVarPicker, varButton } from "./varpicker.js";
 import { isoToDisplay } from "./lib/dates.js";
 import {
   DAY_LABELS, DEFAULT_REMINDER_TEMPLATE, buildCore, buildPayload, defaultRunAt, duplicateDraft, queryChips, queryWarnings,
   reminderActions, reminderBody, reminderQuery, runStatusText, scheduleSummary, stateText, templateVariables, TITLE_VARIABLES,
-  CONDITIONS, MAX_RULES, RULE_ACTIONS, RULE_OPS, conditionText, newRule, ruleSummary, splitValues,
+  CONDITIONS, conditionText, ruleSummary,
 } from "./lib/reminder-form.js";
 
 const putJson = (path, body) => api(path, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 const CHANNEL_NAMES = { slack: "Slack", telegram: "Telegram" };
 const shortTime = (iso) => (iso ? isoToDisplay(iso) : "");
-
-const icon = (name) => el("span", { class: "ico", innerHTML: iconSvg(name) });
-
-/** Icon-only button; the tooltip doubles as the accessible name. */
-function iconButton(name, label, onclick, { disabled = false, title = "", danger = false } = {}) {
-  return el("button", {
-    type: "button", class: `btn btn-icon${danger ? " btn-danger" : ""}`, title: title || label, "aria-label": label, disabled, onclick,
-  }, icon(name));
-}
 
 /**
  * The "Nhắc nhở" tab: a table of reminder jobs with a checkbox and number per row.
@@ -397,13 +387,8 @@ export function createReminders({ getQuery, activeCount }) {
 
   // ---- note rules, grouping, send condition, hand-written message --------------------------------------------------
 
-  let rules = [];                                // editing copy of the note rules
   let manual = false;                            // the preview text is hand-written (one-time reminders only)
-  let ruleViews = [];                            // {rule, picker, ms} of the rows on screen
-  let ruleSeq = 0;
-  const fieldList = () => [{ id: "status", name: "Status" }, ...meta.fields.filter((f) => f.id !== "status" && f.id !== "issuekey")];
-  const fieldName = (id) => meta.fieldById[id]?.name ?? id;
-
+  const fieldList = allFieldOptions;
   const fillConditions = () => $("rem-condition").replaceChildren(...CONDITIONS.map((c) => el("option", { value: c.id, text: c.label })));
   fillConditions();
   const syncCondition = () => { $("rem-min-count").hidden = $("rem-condition").value !== "min_count"; };
@@ -419,111 +404,19 @@ export function createReminders({ getQuery, activeCount }) {
   }
 
   function updateSectionBadges() {
-    $("rem-rules-count").textContent = rules.length ? String(rules.length) : "";
+    $("rem-rules-count").textContent = rulesEditor.count() ? String(rulesEditor.count()) : "";
     $("rem-group-count").textContent = $("rem-group-by").value || $("rem-sort-by").value ? "●" : "";
   }
 
   function touched() { markStale(); updateSectionBadges(); }
 
-  const suggest = (field) => async (q) =>
-    (await getJson(`/api/meta/suggest?field=${encodeURIComponent(field)}&q=${encodeURIComponent(q)}`)).map((v) => ({ value: v, label: v }));
-
-  /** One rule as a sentence: "Khi [field] [op] [values]" / "Thì [action] [text]". The row keeps its controls
-   *  alive; only add / delete / reorder rebuild the list. */
-  function ruleView(rule) {
-    const field = el("select", { class: "rule-field", "aria-label": "Field" });
-    fillFieldSelect(field, rule.field);
-    const op = el("select", { class: "rule-op", "aria-label": "Phép so sánh" }, ...RULE_OPS.map((o) => el("option", { value: o.id, text: o.label })));
-    op.value = rule.op;
-    const host = el("div", { class: "rule-values" });
-    const ms = new MultiSelect(host, { placeholder: "Chọn hoặc gõ giá trị, Enter để thêm", allowCustom: true, onChange: () => { rule.values = ms.values(); touched(); } });
-    const contains = el("input", { type: "text", class: "rule-contains", placeholder: "Từ cần tìm", "aria-label": "Từ cần tìm", autocomplete: "off" });
-    const action = el("select", { class: "rule-action", "aria-label": "Hành động" }, ...RULE_ACTIONS.map((a) => el("option", { value: a.id, text: a.label })));
-    action.value = rule.action;
-    const text = el("input", { type: "text", class: "rule-text", maxLength: 200, placeholder: "Nội dung ghi chú, gõ { để chèn biến", "aria-label": "Nội dung ghi chú", autocomplete: "off", value: rule.text ?? "" });
-    text.id = `rem-rule-text-${++ruleSeq}`;
-    const hint = el("span", { class: "muted rule-hint", text: "Issue này sẽ không xuất hiện trong tin" });
-    const picker = attachVarPicker(text, null, () => templateVariables(meta.fields));
-
-    function configure() {                                    // the value list depends on the field
-      if (rule.field === "status") {
-        ms.search = null;
-        ms.setOptions(meta.statuses.map((st) => ({ value: st.name, label: st.name })));
-      } else {
-        ms.setOptions([]);
-        ms.search = suggest(rule.field);
-      }
-    }
-    function sync() {                                         // what to show for the current operator / action
-      host.hidden = rule.op !== "in" && rule.op !== "not_in";
-      contains.hidden = rule.op !== "contains";
-      text.hidden = rule.action === "hide";
-      hint.hidden = rule.action !== "hide";
-    }
-    configure();
-    ms.setSelected((rule.values ?? []).map((v) => ({ value: v, label: v })));
-    contains.value = rule.values?.[0] ?? "";
-    sync();
-
-    field.addEventListener("change", () => {
-      rule.field = field.value;
-      rule.values = [];
-      ms.clear();
-      contains.value = "";
-      configure();
-      touched();
-    });
-    op.addEventListener("change", () => {
-      const carry = rule.values ?? [];
-      rule.op = op.value;
-      if (rule.op === "empty" || rule.op === "not_empty") rule.values = [];
-      else if (rule.op === "contains") { rule.values = carry.slice(0, 1); contains.value = rule.values[0] ?? ""; }
-      else { rule.values = carry; ms.setSelected(carry.map((v) => ({ value: v, label: v }))); }
-      sync();
-      touched();
-    });
-    contains.addEventListener("input", () => { rule.values = splitValues(contains.value).slice(0, 1); touched(); });
-    action.addEventListener("change", () => { rule.action = action.value; sync(); touched(); });
-    text.addEventListener("input", () => { rule.text = text.value; touched(); });
-
-    const move = (by) => () => {
-      const i = rules.indexOf(rule);
-      const j = i + by;
-      if (j < 0 || j >= rules.length) return;
-      [rules[i], rules[j]] = [rules[j], rules[i]];
-      renderRules();
-      touched();
-    };
-    const i = rules.indexOf(rule);
-    const node = el("div", { class: "rem-rule" },
-      el("span", { class: "rule-n", text: String(i + 1) }),
-      el("div", { class: "rule-body" },
-        el("div", { class: "rule-line" }, el("span", { class: "rule-lbl", text: "Khi" }), field, op, host, contains),
-        el("div", { class: "rule-line" }, el("span", { class: "rule-lbl", text: "Thì" }), action, text, hint)),
-      el("div", { class: "rule-tools" },
-        iconButton("up", "Lên", move(-1), { disabled: i === 0 }),
-        iconButton("down", "Xuống", move(1), { disabled: i === rules.length - 1 }),
-        iconButton("trash", "Xóa quy tắc", () => { rules.splice(rules.indexOf(rule), 1); renderRules(); touched(); }, { danger: true })));
-    return { rule, picker, ms, node };
-  }
-
-  function renderRules() {
-    for (const view of ruleViews) { view.picker.destroy(); view.ms.destroy(); }
-    ruleViews = rules.map(ruleView);
-    $("rem-rules").replaceChildren(...ruleViews.map((v) => v.node));
-    $("rem-rules-empty").hidden = rules.length > 0;
-    $("rem-rule-add").disabled = rules.length >= MAX_RULES;
-    updateSectionBadges();
-  }
-
-  $("rem-rule-add").addEventListener("click", () => {
-    if (rules.length >= MAX_RULES) return;
-    rules.push(newRule());
-    renderRules();
-    $("rem-rules-box").open = true;
-    touched();
-    $("rem-rules").lastElementChild?.querySelector("input:not([hidden])")?.focus();
+  const rulesEditor = createRulesEditor({
+    list: $("rem-rules"), empty: $("rem-rules-empty"), addButton: $("rem-rule-add"), fieldOptions: fieldList,
+    variables: () => templateVariables(meta.fields),
+    onAdd: () => { $("rem-rules-box").open = true; },
+    onChange: () => touched(),
   });
+
   for (const id of ["rem-default-note", "rem-group-order", "rem-sort-dir"]) $(id).addEventListener("input", touched);
   for (const id of ["rem-group-by", "rem-sort-by"]) $(id).addEventListener("change", touched);
 
@@ -557,14 +450,14 @@ export function createReminders({ getQuery, activeCount }) {
     $("rem-min-count").value = String(reminder?.min_count ?? 1);
     syncCondition();
     $("rem-maxlines").value = String(reminder?.max_lines ?? 30);
-    rules = (reminder?.note_rules ?? []).map((r) => ({ ...r, values: [...(r.values ?? [])] }));
+    rulesEditor.setRules(reminder?.note_rules ?? []);
     $("rem-default-note").value = reminder?.default_note ?? "";
     fillFieldSelect($("rem-group-by"), reminder?.group_by ?? "", { none: true });
     fillFieldSelect($("rem-sort-by"), reminder?.sort_by ?? "", { none: true });
     $("rem-group-order").value = reminder?.group_order ?? "name";
     $("rem-sort-dir").value = reminder?.sort_dir ?? "asc";
-    renderRules();
-    $("rem-rules-box").open = rules.length > 0 || !!reminder?.default_note;
+    updateSectionBadges();
+    $("rem-rules-box").open = rulesEditor.count() > 0 || !!reminder?.default_note;
     $("rem-group-box").open = !!(reminder?.group_by || reminder?.sort_by);
     $("rem-preview").value = reminder?.custom_message ?? "";
     $("rem-preview").classList.remove("stale");
@@ -582,7 +475,7 @@ export function createReminders({ getQuery, activeCount }) {
     name: $("rem-name").value, enabled: $("rem-enabled").checked, query: editing.query, template: $("rem-template").value,
     title: $("rem-title").value,
     channel: $("rem-channel").value, chatId: $("rem-chat").value, condition: $("rem-condition").value, minCount: $("rem-min-count").value,
-    maxLines: $("rem-maxlines").value, noteRules: rules, defaultNote: $("rem-default-note").value,
+    maxLines: $("rem-maxlines").value, noteRules: rulesEditor.getRules(), defaultNote: $("rem-default-note").value,
     groupBy: $("rem-group-by").value, groupOrder: $("rem-group-order").value, sortBy: $("rem-sort-by").value, sortDir: $("rem-sort-dir").value,
     customMessage: manual && kind() === "once" ? $("rem-preview").value : "",
     scheduleKind: kind(), days: selectedDays(), time: $("rem-time").value, runDate: onceDate.value,

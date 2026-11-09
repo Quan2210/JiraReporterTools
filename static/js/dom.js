@@ -1,3 +1,4 @@
+import { iconSvg } from "./icons.js";
 import { textColorFor } from "./lib/color.js";
 
 export const $ = (id) => document.getElementById(id);
@@ -84,4 +85,16 @@ export function choose(title, bodyNodes, buttons) {
     dlg.addEventListener("close", () => resolve(null), { once: true });
     dlg.showModal();
   });
+}
+
+// ---- icon buttons -----------------------------------------------------------
+
+/** A static icon (trusted SVG from icons.js) in a span. */
+export const icon = (name) => el("span", { class: "ico", innerHTML: iconSvg(name) });
+
+/** Icon-only button; the tooltip doubles as the accessible name. */
+export function iconButton(name, label, onclick, { disabled = false, title = "", danger = false } = {}) {
+  return el("button", {
+    type: "button", class: `btn btn-icon${danger ? " btn-danger" : ""}`, title: title || label, "aria-label": label, disabled, onclick,
+  }, icon(name));
 }

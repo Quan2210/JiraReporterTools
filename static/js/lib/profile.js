@@ -2,6 +2,7 @@ import { DEFAULT_TEMPLATE } from "./message.js";
 import { isHexColor } from "./color.js";
 import { DEFAULT_PAGE_SIZE, PAGE_SIZES } from "./paging.js";
 import { isDateToken } from "./dates.js";
+import { cleanRules } from "./note-rules.js";
 
 export const PROFILE_VERSION = 1;
 export const MAX_PROFILE_BYTES = 5 * 1024 * 1024;
@@ -52,6 +53,8 @@ export function defaultProfile() {
     filters: emptyFilters(),
     statusColors: {},
     messageTemplate: DEFAULT_TEMPLATE,
+    noteRules: [],          // rules that pick the {note} text of the exported message (see lib/note-rules.js)
+    defaultNote: "",
     notes: {},
   };
 }
@@ -98,6 +101,9 @@ export function sanitizeProfile(input) {
 
   out.messageTemplate = typeof input.messageTemplate === "string" && input.messageTemplate.trim()
     ? input.messageTemplate.slice(0, 1000) : DEFAULT_TEMPLATE;
+
+  out.noteRules = cleanRules(input.noteRules);
+  out.defaultNote = str(input.defaultNote, 200);
 
   if (isObject(input.notes)) {
     for (const [key, note] of Object.entries(input.notes).slice(0, MAX_NOTES)) {
